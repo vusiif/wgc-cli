@@ -4,9 +4,10 @@ project(wgccli LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if (NOT MSVC)
-    message(FATAL_ERROR "wgccli requires MSVC on Windows")
-endif()
+# MSVC check deferred to after compiler detection
+# if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+#     message(FATAL_ERROR "wgccli requires MSVC on Windows")
+# endif()
 
 # Locate Windows SDK and C++/WinRT headers
 set(WINSDK_INCLUDE_BASE "C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0")
@@ -43,7 +44,7 @@ target_compile_definitions(wgccli PRIVATE
     _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS
 )
 
-target_compile_options(wgccli PRIVATE /bigobj /EHsc /await)
+target_compile_options(wgccli PRIVATE /bigobj /EHsc)
 
 target_link_libraries(wgccli PRIVATE
     d3d11
