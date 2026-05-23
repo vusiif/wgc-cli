@@ -90,7 +90,11 @@ static int run(const Options& opts) {
     if (target.minimized && opts.restore) {
         std::wcout << L"Restoring minimized window...\n";
         ShowWindow(target.hwnd, SW_RESTORE);
-        Sleep(300);
+        Sleep(500);
+        // Wait until window is no longer iconic
+        for (int i = 0; i < 10 && IsIconic(target.hwnd); ++i) {
+            Sleep(100);
+        }
     }
 
     // Initialize D3D11
