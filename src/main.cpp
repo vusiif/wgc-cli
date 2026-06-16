@@ -4,6 +4,8 @@
 #include "capture_wgc.h"
 #include "image_wic.h"
 #include "d3d_helpers.h"
+#include "server.h"
+#include "client.h"
 
 #include <windows.h>
 #include <iostream>
@@ -25,6 +27,16 @@ int wmain(int argc, wchar_t* argv[]) {
     if (opts.version) {
         print_version();
         return 0;
+    }
+
+    // Server mode
+    if (opts.server) {
+        return run_server(opts.pipe);
+    }
+
+    // Client mode
+    if (!opts.client.empty()) {
+        return run_client(opts.pipe, opts.client);
     }
 
     return run(opts);

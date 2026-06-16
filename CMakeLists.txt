@@ -27,6 +27,8 @@ add_executable(wgccli
     src/d3d_helpers.cpp
     src/image_wic.cpp
     src/output.cpp
+    src/server.cpp
+    src/client.cpp
 )
 
 target_include_directories(wgccli PRIVATE

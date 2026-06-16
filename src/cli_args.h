@@ -29,6 +29,9 @@ struct Options {
     bool help = false;
     bool version = false;
     bool has_title = false;
+    bool server = false;
+    std::wstring client;   // JSON request to send to server
+    std::wstring pipe = L"wgccli";
 };
 
 // Returns false if parsing fails (caller should exit with BadArgs).
