@@ -17,6 +17,10 @@ Windows command-line screenshot tool using **Windows.Graphics.Capture** API. Des
 
 Grab `wgccli.exe` from [Releases](https://github.com/vusiif/wgc-cli/releases).
 
+## AI Agent Skill
+
+This repo includes a [SKILL.md](SKILL.md) for Claude Code and other AI agents. It provides step-by-step instructions for capturing Windows GUI screenshots, including server/client mode for session isolation, troubleshooting, and a ready-to-use PowerShell helper.
+
 ## Usage
 
 ```bash
