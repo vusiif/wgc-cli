@@ -2,6 +2,7 @@
 
 #include "cli_args.h"
 #include <string>
+#include <vector>
 
 struct MatchedWindow {
     std::wstring title;
@@ -13,5 +14,10 @@ struct MatchedWindow {
     bool minimized = false;
 };
 
-void output_success(const Options& opts, const MatchedWindow& win, const std::wstring& screenshot_path);
+void output_success(const Options& opts, const MatchedWindow& win,
+                    const std::wstring& screenshot_path,
+                    const std::vector<MatchedWindow>& candidates = {});
 void output_error(const Options& opts, ExitCode code, const std::wstring& error_code, const std::wstring& message);
+void output_error_ex(const Options& opts, ExitCode code, const std::wstring& error_code,
+                     const std::wstring& message, const std::wstring& stage = L"",
+                     const std::wstring& hresult = L"", const std::wstring& suggestion = L"");

@@ -32,6 +32,8 @@ struct Options {
     bool server = false;
     std::wstring client;   // JSON request to send to server
     std::wstring pipe = L"wgccli";
+    bool require_unique = false;
+    bool doctor = false;
 };
 
 // Returns false if parsing fails (caller should exit with BadArgs).

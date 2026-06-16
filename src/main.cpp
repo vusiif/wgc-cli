@@ -6,6 +6,7 @@
 #include "d3d_helpers.h"
 #include "server.h"
 #include "client.h"
+#include "diagnose.h"
 
 #include <windows.h>
 #include <iostream>
@@ -43,10 +44,19 @@ int wmain(int argc, wchar_t* argv[]) {
 }
 
 static int run(const Options& opts) {
+    // --doctor mode
+    if (opts.doctor) {
+        return run_doctor(opts);
+    }
+
     // --list mode
     if (opts.list) {
         auto windows = enumerate_windows(opts.include_minimized);
-        print_window_list(windows);
+        if (opts.json) {
+            output_window_list_json(windows);
+        } else {
+            print_window_list(windows);
+        }
         return 0;
     }
 
@@ -66,6 +76,7 @@ static int run(const Options& opts) {
 
     // Find target window
     std::vector<WindowInfo> all_windows;
+    std::vector<WindowInfo> match_candidates;
     WindowInfo target{};
     bool found = false;
 
@@ -76,7 +87,7 @@ static int run(const Options& opts) {
         }
     } else {
         all_windows = enumerate_windows(opts.include_minimized);
-        auto match = find_best_match(all_windows, opts.title, opts.exact);
+        auto match = find_best_match(all_windows, opts.title, opts.exact, &match_candidates);
         if (match) {
             target = *match;
             found = true;
@@ -89,6 +100,14 @@ static int run(const Options& opts) {
             : (L"title: " + opts.title);
         output_error(opts, ExitCode::WindowNotFound, L"WINDOW_NOT_FOUND",
             L"No visible top-level window matched " + desc);
+        return static_cast<int>(ExitCode::WindowNotFound);
+    }
+
+    // --require-unique: fail if multiple candidates
+    if (opts.require_unique && match_candidates.size() > 1) {
+        output_error(opts, ExitCode::WindowNotFound, L"AMBIGUOUS_MATCH",
+            L"Multiple windows matched (" + std::to_wstring(match_candidates.size()) +
+            L"). Use --hwnd to select a specific window.");
         return static_cast<int>(ExitCode::WindowNotFound);
     }
 
@@ -118,12 +137,16 @@ static int run(const Options& opts) {
     }
 
     // Capture
-    auto captured = capture_window(d3d.device.Get(), target.hwnd, opts.timeout_ms);
-    if (!captured) {
-        output_error(opts, ExitCode::CaptureFailed, L"CAPTURE_FAILED",
-            L"Failed to capture window");
-        return static_cast<int>(ExitCode::CaptureFailed);
+    auto capture_result = capture_window(d3d.device.Get(), target.hwnd, opts.timeout_ms);
+    if (!capture_result.ok) {
+        ExitCode ec = capture_result.error_code == L"TIMEOUT"
+            ? ExitCode::Timeout : ExitCode::CaptureFailed;
+        output_error_ex(opts, ec, capture_result.error_code,
+            capture_result.message, capture_result.stage,
+            capture_result.hresult, capture_result.suggestion);
+        return static_cast<int>(ec);
     }
+    auto& captured = *capture_result.image;
 
     // Generate output path
     std::wstring out_path;
@@ -140,7 +163,7 @@ static int run(const Options& opts) {
     }
 
     // Save PNG
-    if (!save_png(*captured, out_path)) {
+    if (!save_png(captured, out_path)) {
         output_error(opts, ExitCode::SaveFailed, L"SAVE_FAILED",
             L"Failed to save PNG to " + out_path);
         return static_cast<int>(ExitCode::SaveFailed);
@@ -152,10 +175,24 @@ static int run(const Options& opts) {
     mw.className = target.className;
     mw.hwnd = reinterpret_cast<uint64_t>(target.hwnd);
     mw.pid = target.pid;
-    mw.width = captured->width;
-    mw.height = captured->height;
+    mw.width = captured.width;
+    mw.height = captured.height;
     mw.minimized = target.minimized;
 
-    output_success(opts, mw, out_path);
+    // Build candidates list
+    std::vector<MatchedWindow> mwc;
+    for (const auto& c : match_candidates) {
+        MatchedWindow cmw;
+        cmw.title = c.title;
+        cmw.className = c.className;
+        cmw.hwnd = reinterpret_cast<uint64_t>(c.hwnd);
+        cmw.pid = c.pid;
+        cmw.width = c.rect.right - c.rect.left;
+        cmw.height = c.rect.bottom - c.rect.top;
+        cmw.minimized = c.minimized;
+        mwc.push_back(cmw);
+    }
+
+    output_success(opts, mw, out_path, mwc);
     return 0;
 }

@@ -3,6 +3,8 @@
 
 #include <windows.h>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
@@ -22,6 +24,13 @@ using Microsoft::WRL::ComPtr;
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wgdx = winrt::Windows::Graphics::DirectX;
 namespace wgdxdd = winrt::Windows::Graphics::DirectX::Direct3D11;
+
+static std::wstring hresult_to_hex(HRESULT hr) {
+    std::wostringstream oss;
+    oss << L"0x" << std::uppercase << std::setfill(L'0')
+        << std::setw(8) << std::hex << static_cast<uint32_t>(hr);
+    return oss.str();
+}
 
 static wgdxdd::IDirect3DDevice make_winrt_device(ID3D11Device* device) {
     ComPtr<IDXGIDevice> dxgi_device;
@@ -53,14 +62,21 @@ static ComPtr<ID3D11Texture2D> get_texture_from_surface(wgdxdd::IDirect3DSurface
     return SUCCEEDED(hr) ? texture : nullptr;
 }
 
-std::optional<CapturedImage> capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_ms) {
+CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_ms) {
+    CaptureResult result;
     try {
         winrt::init_apartment(winrt::apartment_type::single_threaded);
     } catch (...) {}
 
     try {
         auto rt_device = make_winrt_device(device);
-        if (!rt_device) return std::nullopt;
+        if (!rt_device) {
+            result.error_code = L"WGC_INIT_FAILED";
+            result.message = L"Failed to create WinRT D3D device";
+            result.stage = L"MakeWinrtDevice";
+            result.suggestion = L"Ensure D3D11 is available and the process has GPU access.";
+            return result;
+        }
 
         auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem>()
             .as<IGraphicsCaptureItemInterop>();
@@ -70,7 +86,18 @@ std::optional<CapturedImage> capture_window(ID3D11Device* device, HWND hwnd, uin
             winrt::guid_of<wgc::GraphicsCaptureItem>(),
             winrt::put_abi(item));
 
-        if (FAILED(hr) || !item) return std::nullopt;
+        if (FAILED(hr) || !item) {
+            result.error_code = L"CAPTURE_FAILED";
+            result.message = L"CreateForWindow failed";
+            result.stage = L"CreateForWindow";
+            result.hresult = hresult_to_hex(hr);
+            if (hr == 0x80070005) {
+                result.suggestion = L"Access denied. The target window may be elevated or protected. Try matching elevation or use server/client mode.";
+            } else {
+                result.suggestion = L"The window may be minimized, cloaked, or on a different desktop. Try --restore or run in the interactive session.";
+            }
+            return result;
+        }
 
         auto size = item.Size();
 
@@ -85,7 +112,7 @@ std::optional<CapturedImage> capture_window(ID3D11Device* device, HWND hwnd, uin
         try { session.IsCursorCaptureEnabled(false); } catch (...) {}
 
         winrt::handle frame_event{ CreateEvent(nullptr, TRUE, FALSE, nullptr) };
-        std::optional<CapturedImage> result;
+        std::optional<CapturedImage> result_image;
 
         frame_pool.FrameArrived([&](wgc::Direct3D11CaptureFramePool const& pool,
                                      winrt::Windows::Foundation::IInspectable const&) {
@@ -147,7 +174,7 @@ std::optional<CapturedImage> capture_window(ID3D11Device* device, HWND hwnd, uin
 
                 ctx->Unmap(staging.Get(), 0);
 
-                result = std::move(img);
+                result_image = std::move(img);
                 SetEvent(frame_event.get());
             } catch (...) {
                 SetEvent(frame_event.get());
@@ -160,16 +187,36 @@ std::optional<CapturedImage> capture_window(ID3D11Device* device, HWND hwnd, uin
         session.Close();
         frame_pool.Close();
 
-        if (wait_result != WAIT_OBJECT_0 || !result) return std::nullopt;
+        if (wait_result != WAIT_OBJECT_0 || !result_image) {
+            result.error_code = L"CAPTURE_FAILED";
+            result.stage = L"FrameArrived";
+            if (wait_result == WAIT_TIMEOUT) {
+                result.error_code = L"TIMEOUT";
+                result.message = L"Timed out waiting for capture frame";
+                result.suggestion = L"Increase --timeout-ms. Ensure the window is visible and responsive.";
+            } else {
+                result.message = L"Failed to get capture frame";
+                result.suggestion = L"The window may be minimized or the capture session failed. Try --restore.";
+            }
+            return result;
+        }
 
+        result.ok = true;
+        result.image = std::move(*result_image);
         return result;
 
     } catch (const winrt::hresult_error& ex) {
-        std::wcerr << L"[error] WGC: 0x" << std::hex
-                   << static_cast<uint32_t>(ex.code()) << std::dec
-                   << L" " << std::wstring_view(ex.message()) << L"\n";
-        return std::nullopt;
+        result.error_code = L"CAPTURE_FAILED";
+        result.message = std::wstring(ex.message());
+        result.stage = L"WGC_Runtime";
+        result.hresult = hresult_to_hex(ex.code());
+        result.suggestion = L"Windows.Graphics.Capture runtime error. Ensure the system supports WGC (Windows 10 1809+).";
+        return result;
     } catch (...) {
-        return std::nullopt;
+        result.error_code = L"CAPTURE_FAILED";
+        result.message = L"Unknown exception during capture";
+        result.stage = L"Unknown";
+        result.suggestion = L"An unexpected error occurred. Try running in the interactive desktop session.";
+        return result;
     }
 }

@@ -34,6 +34,10 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
             opts.include_minimized = true;
         } else if (arg == L"--no-restore") {
             opts.restore = false;
+        } else if (arg == L"--require-unique") {
+            opts.require_unique = true;
+        } else if (arg == L"--doctor") {
+            opts.doctor = true;
         } else if (arg == L"--restore") {
             opts.restore = true;
         } else if (arg == L"--title") {
@@ -121,6 +125,8 @@ void print_help() {
         L"  --include-minimized        Include minimized windows in list (default: true)\n"
         L"  --no-restore               Do not try to restore minimized window\n"
         L"  --restore                  Try to restore window before capture (default: true)\n"
+        L"  --require-unique           Fail if multiple windows match (use --list --json first)\n"
+        L"  --doctor                   Run environment diagnostics\n"
         L"  --pipe <name>              Named pipe name (default: wgccli)\n"
         L"  --help                     Print this help\n"
         L"  --version                  Print version\n"

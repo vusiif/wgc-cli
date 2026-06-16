@@ -98,9 +98,19 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
         return L"{\"ok\":false,\"errorCode\":\"D3D11_INIT_FAILED\",\"message\":\"D3D11 device creation failed\"}";
     }
 
-    auto captured = capture_window(d3d.device.Get(), target.hwnd, 3000);
-    if (!captured) {
-        return L"{\"ok\":false,\"errorCode\":\"CAPTURE_FAILED\",\"message\":\"Capture failed\"}";
+    auto capture_result = capture_window(d3d.device.Get(), target.hwnd, 3000);
+    if (!capture_result.ok) {
+        std::wostringstream oss;
+        oss << L"{\"ok\":false,\"errorCode\":\"" << escape_json(capture_result.error_code)
+            << L"\",\"message\":\"" << escape_json(capture_result.message) << L"\"";
+        if (!capture_result.stage.empty())
+            oss << L",\"stage\":\"" << escape_json(capture_result.stage) << L"\"";
+        if (!capture_result.hresult.empty())
+            oss << L",\"hresult\":\"" << escape_json(capture_result.hresult) << L"\"";
+        if (!capture_result.suggestion.empty())
+            oss << L",\"suggestion\":\"" << escape_json(capture_result.suggestion) << L"\"";
+        oss << L"}";
+        return oss.str();
     }
 
     // Generate output path
@@ -114,8 +124,8 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
         out_path = generate_png_path(out, target.title);
     }
 
-    if (!save_png(*captured, out_path)) {
-        return L"{\"ok\":false,\"errorCode\":\"SAVE_FAILED\",\"message\":\"PNG save failed\"}";
+    if (!save_png(*capture_result.image, out_path)) {
+        return L"{\"ok\":false,\"errorCode\":\"SAVE_FAILED\",\"message\":\"PNG save failed\",\"suggestion\":\"Check output directory exists and is writable.\"}";
     }
 
     int ww = target.rect.right - target.rect.left;

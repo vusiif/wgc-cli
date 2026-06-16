@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <cstdint>
 
 static std::wstring to_lower(std::wstring s) {
     std::transform(s.begin(), s.end(), s.begin(), ::towlower);
@@ -138,7 +139,8 @@ WindowInfo find_window_by_hwnd(uint64_t hwnd_value) {
 }
 
 std::optional<WindowInfo> find_best_match(const std::vector<WindowInfo>& windows,
-                                           const std::wstring& query, bool exact) {
+                                           const std::wstring& query, bool exact,
+                                           std::vector<WindowInfo>* out_candidates) {
     std::wstring q_lower = to_lower(query);
 
     struct ScoredWindow {
@@ -178,6 +180,14 @@ std::optional<WindowInfo> find_best_match(const std::vector<WindowInfo>& windows
             if (a.score != b.score) return a.score > b.score;
             return a.title_len < b.title_len;
         });
+
+    // Populate all candidates if requested
+    if (out_candidates) {
+        out_candidates->clear();
+        for (const auto& sw : candidates) {
+            out_candidates->push_back(*sw.info);
+        }
+    }
 
     return *candidates[0].info;
 }
@@ -240,4 +250,61 @@ void print_window_list(const std::vector<WindowInfo>& windows) {
     std::wostringstream summary;
     summary << L"\nShowing " << shown << L" of " << windows.size() << L" windows";
     write_line(summary.str());
+}
+
+static std::wstring json_escape(const std::wstring& s) {
+    std::wostringstream oss;
+    for (wchar_t c : s) {
+        switch (c) {
+            case L'"':  oss << L"\\\""; break;
+            case L'\\': oss << L"\\\\"; break;
+            case L'\n': oss << L"\\n";  break;
+            case L'\r': oss << L"\\r";  break;
+            case L'\t': oss << L"\\t";  break;
+            case L'\0': oss << L"\\u0000"; break;
+            default:
+                if (c < 0x20) {
+                    std::wostringstream hex;
+                    hex << L"\\u" << std::setfill(L'0') << std::setw(4)
+                        << std::hex << static_cast<int>(c);
+                    oss << hex.str();
+                } else {
+                    oss << c;
+                }
+                break;
+        }
+    }
+    return oss.str();
+}
+
+static std::wstring hwnd_hex_json(HWND hwnd) {
+    std::wostringstream oss;
+    oss << L"0x" << std::uppercase << std::setfill(L'0')
+        << std::setw(16) << std::hex << reinterpret_cast<uintptr_t>(hwnd);
+    return oss.str();
+}
+
+void output_window_list_json(const std::vector<WindowInfo>& windows) {
+    std::wostringstream oss;
+    oss << L"{\"ok\":true,\"windows\":[";
+    bool first = true;
+    for (const auto& w : windows) {
+        if (is_noise_window(w)) continue;
+        int ww = w.rect.right - w.rect.left;
+        int wh = w.rect.bottom - w.rect.top;
+        if (ww <= 1 && wh <= 1 && !w.minimized) continue;
+
+        if (!first) oss << L",";
+        first = false;
+        oss << L"{\"hwnd\":\"" << hwnd_hex_json(w.hwnd)
+            << L"\",\"pid\":" << w.pid
+            << L",\"title\":\"" << json_escape(w.title)
+            << L"\",\"className\":\"" << json_escape(w.className)
+            << L"\",\"width\":" << ww
+            << L",\"height\":" << wh
+            << L",\"state\":\"" << (w.minimized ? L"minimized" : L"normal")
+            << L"\"}";
+    }
+    oss << L"]}\n";
+    std::wcout << oss.str();
 }

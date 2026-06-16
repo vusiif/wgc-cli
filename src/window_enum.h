@@ -18,5 +18,7 @@ struct WindowInfo {
 std::vector<WindowInfo> enumerate_windows(bool include_minimized);
 WindowInfo find_window_by_hwnd(uint64_t hwnd_value);
 std::optional<WindowInfo> find_best_match(const std::vector<WindowInfo>& windows,
-                                           const std::wstring& query, bool exact);
+                                           const std::wstring& query, bool exact,
+                                           std::vector<WindowInfo>* out_candidates = nullptr);
 void print_window_list(const std::vector<WindowInfo>& windows);
+void output_window_list_json(const std::vector<WindowInfo>& windows);
