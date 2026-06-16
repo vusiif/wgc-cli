@@ -8,3 +8,8 @@ cmake-build-*/
 *.log
 CMakeFiles/
 CMakeCache.txt
+screenshots/
+*.raw
+test_*.txt
+test_*.json
+pipe_*.txt

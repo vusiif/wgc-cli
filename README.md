@@ -10,6 +10,7 @@ Windows command-line screenshot tool using **Windows.Graphics.Capture** API. Des
 - PNG output with auto-generated filenames
 - JSON output mode for programmatic use
 - Minimized window auto-restore before capture
+- **Server/Client mode** — named pipe IPC for AI agents running in different sessions
 - No GUI, no clipboard, no disk scanning
 
 ## Download
@@ -34,6 +35,24 @@ wgccli.exe --list
 # JSON output
 wgccli.exe --title "Chrome" --out C:\Screenshots --json
 ```
+
+### Server/Client Mode (for AI Agents)
+
+When an AI agent runs in a different session (e.g., as a service or SSH), it cannot directly enumerate or capture GUI windows due to session isolation. The server/client mode solves this by using named pipes for IPC.
+
+```bash
+# 1. Start the server in the user's interactive session (e.g., via Task Scheduler or startup script)
+wgccli.exe --server
+
+# 2. Agent sends requests via the named pipe
+wgccli.exe --client "{\"action\":\"list\"}"
+wgccli.exe --client "{\"action\":\"capture\",\"title\":\"Notepad\",\"out\":\"C:\\Temp\"}"
+wgccli.exe --client "{\"action\":\"capture\",\"hwnd\":12345,\"out\":\"C:\\Temp\"}"
+```
+
+The server runs in the user's desktop session where it has access to GUI windows. The client can run from any session (agent, service, SSH) and communicates over `\\.\pipe\wgccli`.
+
+Use `--pipe <name>` to customize the pipe name (default: `wgccli`).
 
 ### Output (plain mode)
 
@@ -73,6 +92,9 @@ RESULT_SCREENSHOT_PATH=C:\Screenshots\20260523-153022-android-studio.png
 | `--json` | JSON output |
 | `--timeout-ms <n>` | Wait for first frame (default: 3000) |
 | `--no-restore` | Don't restore minimized windows |
+| `--server` | Start named pipe server (for agent use) |
+| `--client <json>` | Send request to server via pipe |
+| `--pipe <name>` | Custom pipe name (default: `wgccli`) |
 | `--help` | Print help |
 | `--version` | Print version |
 
@@ -124,9 +146,12 @@ Or open in CLion with MSVC toolchain configured.
 This tool is designed for scenarios where a CLI agent (like Claude Code) needs to capture a Windows GUI application:
 
 ```bash
-# Agent workflow
+# Direct mode (agent in same session)
 wgccli.exe --title "Android Studio" --out "$env:USERPROFILE\Pictures\Screenshots"
-# Read the RESULT_SCREENSHOT_PATH output and analyze the image
+
+# Server/Client mode (agent in different session)
+# Start server in user session first, then:
+wgccli.exe --client "{\"action\":\"capture\",\"title\":\"Android Studio\",\"out\":\"C:\\Screenshots\"}"
 ```
 
 Unlike ShareX or other screenshot tools, wgccli does not depend on the active window, does not use the clipboard, and does not require scanning output folders.
