@@ -63,10 +63,10 @@ static int run(const Options& opts) {
         return 0;
     }
 
-    // Need --title, --hwnd, or --pid for capture
-    if (!opts.has_title && !opts.has_hwnd && !opts.has_pid) {
+    // Need --title, --hwnd, --pid, --process, or --class-name for capture
+    if (!opts.has_title && !opts.has_hwnd && !opts.has_pid && !opts.has_process && !opts.has_className) {
         output_error(opts, ExitCode::BadArgs, L"MISSING_TARGET",
-            L"Specify --title, --hwnd, --pid, or --list");
+            L"Specify --title, --hwnd, --pid, --process, --class-name, or --list");
         return static_cast<int>(ExitCode::BadArgs);
     }
 
@@ -103,11 +103,17 @@ static int run(const Options& opts) {
                 found = true;
             }
         } else if (opts.has_pid || opts.has_process || opts.has_className) {
-            // --pid/--process/--class-name without --title: take first match
-            if (!filtered.empty()) {
+            // --pid/--process/--class-name without --title
+            if (filtered.size() == 1) {
                 target = filtered[0];
                 match_candidates = filtered;
                 found = true;
+            } else if (filtered.size() > 1) {
+                // Multiple matches: fail with AMBIGUOUS_MATCH
+                match_candidates = filtered;
+                output_error(opts, ExitCode::WindowNotFound, L"AMBIGUOUS_MATCH",
+                    std::to_wstring(filtered.size()) + L" windows matched. Use --title or --hwnd to select one.");
+                return static_cast<int>(ExitCode::WindowNotFound);
             }
         }
     }
@@ -134,13 +140,15 @@ static int run(const Options& opts) {
 
     int win_w = target.rect.right - target.rect.left;
     int win_h = target.rect.bottom - target.rect.top;
-    std::wcout << L"Matched window: " << target.title << L"\n";
-    std::wcout << L"Handle: 0x" << std::hex << reinterpret_cast<uintptr_t>(target.hwnd) << std::dec << L"\n";
-    std::wcout << L"Window size: " << win_w << L"x" << win_h << L"\n";
+    if (!opts.json) {
+        std::wcout << L"Matched window: " << target.title << L"\n";
+        std::wcout << L"Handle: 0x" << std::hex << reinterpret_cast<uintptr_t>(target.hwnd) << std::dec << L"\n";
+        std::wcout << L"Window size: " << win_w << L"x" << win_h << L"\n";
+    }
 
     // Restore if minimized
     if (target.minimized && opts.restore) {
-        std::wcout << L"Restoring minimized window...\n";
+        if (!opts.json) std::wcout << L"Restoring minimized window...\n";
         ShowWindow(target.hwnd, SW_RESTORE);
         Sleep(500);
         // Wait until window is no longer iconic

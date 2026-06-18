@@ -213,7 +213,7 @@ int run_server(const std::wstring& pipe_name) {
         HANDLE hPipe = CreateNamedPipeW(
             full_pipe.c_str(),
             PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             65536, 65536, 0, nullptr);
 

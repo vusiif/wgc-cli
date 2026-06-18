@@ -219,5 +219,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.4.0\n";
+    std::wcout << L"wgccli 1.5.0\n";
 }

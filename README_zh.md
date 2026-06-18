@@ -181,8 +181,9 @@ wgccli.exe --client "{\"action\":\"capture\",\"process\":\"chrome.exe\",\"out\":
 
 ## 系统要求
 
-- Windows 10 版本 1809（build 17763）或更高
+- Windows 10 版本 1903（build 18362）或更高
 - 支持 D3D11 的 GPU
+- 运行 `wgccli.exe --doctor` 检查兼容性
 
 ## 从源码构建
 

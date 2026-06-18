@@ -181,8 +181,9 @@ Use `--pipe <name>` to customize the pipe name (default: `wgccli`).
 
 ## Requirements
 
-- Windows 10 version 1809 (build 17763) or later
+- Windows 10 version 1903 (build 18362) or later
 - D3D11 capable GPU
+- Run `wgccli.exe --doctor` to check compatibility
 
 ## Build from Source
 

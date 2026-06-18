@@ -106,6 +106,8 @@ int run_doctor(const Options& opts) {
         std::wostringstream oss;
         oss << L"{\"ok\":true"
             << L",\"osBuild\":" << os_build
+            << L",\"minSupportedBuild\":18362"
+            << L",\"compatible\":" << (os_build >= 18362 ? L"true" : L"false")
             << L",\"wgcAvailable\":" << (wgc_ok ? L"true" : L"false")
             << L",\"d3d11Available\":" << (d3d_ok ? L"true" : L"false")
             << L",\"interactiveSession\":" << (interactive ? L"true" : L"false")
@@ -114,7 +116,8 @@ int run_doctor(const Options& opts) {
             << L"}\n";
         write_stdout_utf8(oss.str());
     } else {
-        std::wcout << L"OS Build:       " << os_build << L"\n";
+        std::wcout << L"OS Build:       " << os_build << L" (min: 18362)\n";
+        std::wcout << L"Compatible:     " << (os_build >= 18362 ? L"Yes" : L"No") << L"\n";
         std::wcout << L"WGC Available:  " << (wgc_ok ? L"Yes" : L"No") << L"\n";
         std::wcout << L"D3D11 Available:" << (d3d_ok ? L"Yes" : L"No") << L"\n";
         std::wcout << L"Interactive:    " << (interactive ? L"Yes" : L"No") << L"\n";
