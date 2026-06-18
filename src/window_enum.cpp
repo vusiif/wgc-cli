@@ -1,4 +1,5 @@
 #include "window_enum.h"
+#include "output.h"
 #include <windows.h>
 #include <algorithm>
 #include <iostream>
@@ -306,5 +307,5 @@ void output_window_list_json(const std::vector<WindowInfo>& windows) {
             << L"\"}";
     }
     oss << L"]}\n";
-    std::wcout << oss.str();
+    write_stdout_utf8(oss.str());
 }

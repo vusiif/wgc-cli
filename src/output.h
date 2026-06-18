@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+// Write a wide string as UTF-8 to stdout via WriteFile, bypassing std::wcout.
+// This avoids corruption from control characters in window titles.
+void write_stdout_utf8(const std::wstring& s);
+
 struct MatchedWindow {
     std::wstring title;
     std::wstring className;

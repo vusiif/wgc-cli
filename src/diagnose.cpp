@@ -1,6 +1,7 @@
 #include "diagnose.h"
 #include "d3d_helpers.h"
 #include "window_enum.h"
+#include "output.h"
 
 #include <windows.h>
 #include <iostream>
@@ -111,7 +112,7 @@ int run_doctor(const Options& opts) {
             << L",\"elevated\":" << (elevated ? L"true" : L"false")
             << L",\"windowsCount\":" << win_count
             << L"}\n";
-        std::wcout << oss.str();
+        write_stdout_utf8(oss.str());
     } else {
         std::wcout << L"OS Build:       " << os_build << L"\n";
         std::wcout << L"WGC Available:  " << (wgc_ok ? L"Yes" : L"No") << L"\n";

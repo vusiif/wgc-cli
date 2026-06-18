@@ -1,4 +1,5 @@
 #include "client.h"
+#include "output.h"
 
 #include <windows.h>
 #include <iostream>
@@ -43,10 +44,7 @@ int run_client(const std::wstring& pipe_name, const std::wstring& request_json) 
     }
 
     std::wstring response(buf, bytes_read / sizeof(wchar_t));
-    // Write response to stdout
-    // Note: WriteConsoleW doesn't work when stdout is redirected,
-    // so we use wcout. The server escapes all control characters in JSON.
-    std::wcout << response << L"\n";
+    write_stdout_utf8(response + L"\n");
 
     CloseHandle(hPipe);
     return 0;

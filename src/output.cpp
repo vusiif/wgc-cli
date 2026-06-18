@@ -1,8 +1,24 @@
 #include "output.h"
+#include <windows.h>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <vector>
+
+void write_stdout_utf8(const std::wstring& s) {
+    if (s.empty()) return;
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, s.c_str(),
+                                        static_cast<int>(s.size()),
+                                        nullptr, 0, nullptr, nullptr);
+    if (utf8_len <= 0) return;
+    std::string utf8(utf8_len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(),
+                        static_cast<int>(s.size()),
+                        utf8.data(), utf8_len, nullptr, nullptr);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD written = 0;
+    WriteFile(hOut, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+}
 
 static std::wstring hwnd_to_hex(uint64_t hwnd) {
     std::wostringstream oss;
@@ -19,7 +35,17 @@ static std::wstring escape_json_string(const std::wstring& s) {
             case L'\n': oss << L"\\n";  break;
             case L'\r': oss << L"\\r";  break;
             case L'\t': oss << L"\\t";  break;
-            default:    oss << c;       break;
+            case L'\0': oss << L"\\u0000"; break;
+            default:
+                if (c < 0x20) {
+                    std::wostringstream hex;
+                    hex << L"\\u" << std::setfill(L'0') << std::setw(4)
+                        << std::hex << static_cast<int>(c);
+                    oss << hex.str();
+                } else {
+                    oss << c;
+                }
+                break;
         }
     }
     return oss.str();
@@ -65,7 +91,7 @@ void output_success(const Options& opts, const MatchedWindow& win,
 
         oss << L"  \"screenshotPath\": \"" << escape_json_string(screenshot_path) << L"\"\n"
             << L"}\n";
-        std::wcout << oss.str();
+        write_stdout_utf8(oss.str());
     } else {
         std::wcout << L"Matched window: " << win.title << L"\n";
         std::wcout << L"Handle: " << hwnd_to_hex(win.hwnd) << L"\n";
@@ -95,7 +121,7 @@ void output_error_ex(const Options& opts, ExitCode code, const std::wstring& err
         if (!suggestion.empty())
             oss << L",\n  \"suggestion\": \"" << escape_json_string(suggestion) << L"\"";
         oss << L"\n}\n";
-        std::wcout << oss.str();
+        write_stdout_utf8(oss.str());
     } else {
         std::wcerr << L"ERROR_CODE=" << error_code << L"\n";
         std::wcerr << L"ERROR_MESSAGE=" << message << L"\n";
