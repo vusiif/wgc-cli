@@ -125,16 +125,18 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
 
     // Generate output path
     std::wstring out_path;
-    if (out.size() >= 4 && (out.substr(out.size() - 4) == L".png" || out.substr(out.size() - 4) == L".PNG")) {
+    if (out.size() >= 4 && (out.substr(out.size() - 4) == L".png" || out.substr(out.size() - 4) == L".PNG"
+                          || out.substr(out.size() - 4) == L".jpg" || out.substr(out.size() - 4) == L".JPG"
+                          || out.substr(out.size() - 4) == L".bmp" || out.substr(out.size() - 4) == L".BMP")) {
         out_path = out;
         auto parent = std::filesystem::path(out_path).parent_path();
         if (!parent.empty()) std::filesystem::create_directories(parent);
     } else {
         std::filesystem::create_directories(out);
-        out_path = generate_png_path(out, target.title);
+        out_path = generate_output_path(out, target.title, L"png");
     }
 
-    if (!save_png(*capture_result.image, out_path)) {
+    if (!save_image(*capture_result.image, out_path, L"png")) {
         return L"{\"ok\":false,\"errorCode\":\"SAVE_FAILED\",\"message\":\"PNG save failed\",\"suggestion\":\"Check output directory exists and is writable.\"}";
     }
 

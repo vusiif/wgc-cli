@@ -41,6 +41,12 @@ struct Options {
     std::wstring className;
     bool has_className = false;
     uint32_t delay_ms = 0;
+    uint32_t max_width = 0;
+    uint32_t resize_w = 0;
+    uint32_t resize_h = 0;
+    std::wstring format = L"png";
+    uint32_t crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
+    bool has_crop = false;
 };
 
 // Returns false if parsing fails (caller should exit with BadArgs).

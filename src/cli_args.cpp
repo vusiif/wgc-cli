@@ -65,6 +65,43 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 return false;
             }
             opts.delay_ms = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+        } else if (arg == L"--max-width") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --max-width requires a number\n";
+                return false;
+            }
+            opts.max_width = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+        } else if (arg == L"--resize") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --resize requires WxH (e.g. 1024x768)\n";
+                return false;
+            }
+            std::wstring s = argv[i];
+            auto xpos = s.find(L'x');
+            if (xpos == std::wstring::npos) {
+                std::wcerr << L"Error: --resize format is WxH (e.g. 1024x768)\n";
+                return false;
+            }
+            opts.resize_w = static_cast<uint32_t>(std::wcstoul(s.c_str(), nullptr, 10));
+            opts.resize_h = static_cast<uint32_t>(std::wcstoul(s.c_str() + xpos + 1, nullptr, 10));
+        } else if (arg == L"--format") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --format requires png, jpg, or bmp\n";
+                return false;
+            }
+            opts.format = argv[i];
+        } else if (arg == L"--crop") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --crop requires x,y,w,h\n";
+                return false;
+            }
+            std::wstring s = argv[i];
+            wchar_t* end;
+            opts.crop_x = static_cast<uint32_t>(std::wcstoul(s.c_str(), &end, 10));
+            opts.crop_y = static_cast<uint32_t>(std::wcstoul(end + 1, &end, 10));
+            opts.crop_w = static_cast<uint32_t>(std::wcstoul(end + 1, &end, 10));
+            opts.crop_h = static_cast<uint32_t>(std::wcstoul(end + 1, nullptr, 10));
+            opts.has_crop = true;
         } else if (arg == L"--restore") {
             opts.restore = true;
         } else if (arg == L"--title") {
@@ -156,6 +193,10 @@ void print_help() {
         L"  --process <exe-name>       Filter by process name (e.g. chrome.exe)\n"
         L"  --class-name <name>        Filter by window class name\n"
         L"  --delay-ms <number>        Wait before capture (default: 0)\n"
+        L"  --max-width <number>       Scale down to max width (proportional)\n"
+        L"  --resize <WxH>             Resize to exact dimensions (e.g. 1024x768)\n"
+        L"  --format <png|jpg|bmp>     Output format (default: png)\n"
+        L"  --crop <x,y,w,h>           Crop region after capture\n"
         L"  --require-unique           Fail if multiple windows match (use --list --json first)\n"
         L"  --doctor                   Run environment diagnostics\n"
         L"  --pipe <name>              Named pipe name (default: wgccli)\n"
@@ -178,5 +219,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.3.0\n";
+    std::wcout << L"wgccli 1.4.0\n";
 }

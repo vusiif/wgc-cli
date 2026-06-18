@@ -172,12 +172,30 @@ static int run(const Options& opts) {
             capture_result.hresult, capture_result.suggestion);
         return static_cast<int>(ec);
     }
-    auto& captured = *capture_result.image;
+    CapturedImage captured = std::move(*capture_result.image);
+
+    // Crop
+    if (opts.has_crop) {
+        captured = crop_image(captured, opts.crop_x, opts.crop_y, opts.crop_w, opts.crop_h);
+    }
+
+    // Resize
+    if (opts.resize_w > 0 && opts.resize_h > 0) {
+        captured = resize_image(captured, opts.resize_w, opts.resize_h);
+    } else if (opts.max_width > 0 && captured.width > opts.max_width) {
+        uint32_t target_h = captured.height * opts.max_width / captured.width;
+        captured = resize_image(captured, opts.max_width, target_h);
+    }
 
     // Generate output path
     std::wstring out_path;
-    if (opts.out.size() >= 4 &&
-        (opts.out.substr(opts.out.size() - 4) == L".png" || opts.out.substr(opts.out.size() - 4) == L".PNG")) {
+    // Check if user specified a file path (has known extension)
+    std::wstring ext_check = opts.out.size() >= 4
+        ? opts.out.substr(opts.out.size() - 4) : L"";
+    bool is_file_path = (ext_check == L".png" || ext_check == L".PNG"
+                      || ext_check == L".jpg" || ext_check == L".JPG"
+                      || ext_check == L".bmp" || ext_check == L".BMP");
+    if (is_file_path) {
         out_path = opts.out;
         auto parent = std::filesystem::path(out_path).parent_path();
         if (!parent.empty()) {
@@ -185,13 +203,13 @@ static int run(const Options& opts) {
         }
     } else {
         std::filesystem::create_directories(opts.out);
-        out_path = generate_png_path(opts.out, target.title);
+        out_path = generate_output_path(opts.out, target.title, opts.format);
     }
 
-    // Save PNG
-    if (!save_png(captured, out_path)) {
+    // Save
+    if (!save_image(captured, out_path, opts.format)) {
         output_error(opts, ExitCode::SaveFailed, L"SAVE_FAILED",
-            L"Failed to save PNG to " + out_path);
+            L"Failed to save image to " + out_path);
         return static_cast<int>(ExitCode::SaveFailed);
     }
 
