@@ -63,6 +63,19 @@ static bool is_noise_window(const WindowInfo& w) {
     return false;
 }
 
+static std::wstring get_exe_name(DWORD pid) {
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hProc) return L"";
+    wchar_t buf[MAX_PATH]{};
+    DWORD size = MAX_PATH;
+    BOOL ok = QueryFullProcessImageNameW(hProc, 0, buf, &size);
+    CloseHandle(hProc);
+    if (!ok) return L"";
+    std::wstring path(buf, size);
+    auto pos = path.find_last_of(L"\\/");
+    return (pos != std::wstring::npos) ? path.substr(pos + 1) : path;
+}
+
 struct EnumCtx {
     std::vector<WindowInfo>* result;
     int total;
@@ -91,6 +104,7 @@ static BOOL CALLBACK enum_proc(HWND hwnd, LPARAM lParam) {
     info.className = cls;
 
     GetWindowThreadProcessId(hwnd, &info.pid);
+    info.exeName = get_exe_name(info.pid);
     GetWindowRect(hwnd, &info.rect);
     info.minimized = IsIconic(hwnd) != 0;
 
@@ -191,6 +205,32 @@ std::optional<WindowInfo> find_best_match(const std::vector<WindowInfo>& windows
     }
 
     return *candidates[0].info;
+}
+
+std::vector<WindowInfo> find_by_pid(const std::vector<WindowInfo>& windows, uint32_t pid) {
+    std::vector<WindowInfo> result;
+    for (const auto& w : windows) {
+        if (w.pid == pid && !is_noise_window(w)) {
+            result.push_back(w);
+        }
+    }
+    return result;
+}
+
+std::vector<WindowInfo> filter_windows(const std::vector<WindowInfo>& windows,
+                                       uint32_t pid, bool has_pid,
+                                       const std::wstring& process, bool has_process,
+                                       const std::wstring& className, bool has_className) {
+    std::vector<WindowInfo> result;
+    std::wstring process_lower = to_lower(process);
+    for (const auto& w : windows) {
+        if (is_noise_window(w)) continue;
+        if (has_pid && w.pid != pid) continue;
+        if (has_process && to_lower(w.exeName).find(process_lower) == std::wstring::npos) continue;
+        if (has_className && w.className != className) continue;
+        result.push_back(w);
+    }
+    return result;
 }
 
 static std::wstring hwnd_hex(HWND hwnd) {

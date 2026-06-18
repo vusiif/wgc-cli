@@ -52,18 +52,21 @@ static int run(const Options& opts) {
     // --list mode
     if (opts.list) {
         auto windows = enumerate_windows(opts.include_minimized);
+        auto filtered = filter_windows(windows, opts.pid, opts.has_pid,
+                                       opts.process, opts.has_process,
+                                       opts.className, opts.has_className);
         if (opts.json) {
-            output_window_list_json(windows);
+            output_window_list_json(filtered);
         } else {
-            print_window_list(windows);
+            print_window_list(filtered);
         }
         return 0;
     }
 
-    // Need --title or --hwnd for capture
-    if (!opts.has_title && !opts.has_hwnd) {
+    // Need --title, --hwnd, or --pid for capture
+    if (!opts.has_title && !opts.has_hwnd && !opts.has_pid) {
         output_error(opts, ExitCode::BadArgs, L"MISSING_TARGET",
-            L"Specify --title, --hwnd, or --list");
+            L"Specify --title, --hwnd, --pid, or --list");
         return static_cast<int>(ExitCode::BadArgs);
     }
 
@@ -87,17 +90,35 @@ static int run(const Options& opts) {
         }
     } else {
         all_windows = enumerate_windows(opts.include_minimized);
-        auto match = find_best_match(all_windows, opts.title, opts.exact, &match_candidates);
-        if (match) {
-            target = *match;
-            found = true;
+        // Apply filters
+        auto filtered = filter_windows(all_windows, opts.pid, opts.has_pid,
+                                       opts.process, opts.has_process,
+                                       opts.className, opts.has_className);
+
+        if (opts.has_title) {
+            // Match by title within filtered set
+            auto match = find_best_match(filtered, opts.title, opts.exact, &match_candidates);
+            if (match) {
+                target = *match;
+                found = true;
+            }
+        } else if (opts.has_pid || opts.has_process || opts.has_className) {
+            // --pid/--process/--class-name without --title: take first match
+            if (!filtered.empty()) {
+                target = filtered[0];
+                match_candidates = filtered;
+                found = true;
+            }
         }
     }
 
     if (!found) {
-        std::wstring desc = opts.has_hwnd
-            ? (L"hwnd " + std::to_wstring(opts.hwnd))
-            : (L"title: " + opts.title);
+        std::wstring desc;
+        if (opts.has_hwnd) desc = L"hwnd " + std::to_wstring(opts.hwnd);
+        else if (opts.has_title) desc = L"title: " + opts.title;
+        else if (opts.has_pid) desc = L"pid " + std::to_wstring(opts.pid);
+        else if (opts.has_process) desc = L"process: " + opts.process;
+        else if (opts.has_className) desc = L"class: " + opts.className;
         output_error(opts, ExitCode::WindowNotFound, L"WINDOW_NOT_FOUND",
             L"No visible top-level window matched " + desc);
         return static_cast<int>(ExitCode::WindowNotFound);
@@ -126,6 +147,11 @@ static int run(const Options& opts) {
         for (int i = 0; i < 10 && IsIconic(target.hwnd); ++i) {
             Sleep(100);
         }
+    }
+
+    // --delay-ms
+    if (opts.delay_ms > 0) {
+        Sleep(opts.delay_ms);
     }
 
     // Initialize D3D11

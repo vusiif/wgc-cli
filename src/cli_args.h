@@ -34,6 +34,13 @@ struct Options {
     std::wstring pipe = L"wgccli";
     bool require_unique = false;
     bool doctor = false;
+    uint32_t pid = 0;
+    bool has_pid = false;
+    std::wstring process;
+    bool has_process = false;
+    std::wstring className;
+    bool has_className = false;
+    uint32_t delay_ms = 0;
 };
 
 // Returns false if parsing fails (caller should exit with BadArgs).

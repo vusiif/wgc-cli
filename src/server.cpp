@@ -69,17 +69,27 @@ static std::wstring handle_list() {
 }
 
 static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
-                                    const std::wstring& out, bool exact) {
+                                    const std::wstring& out, bool exact,
+                                    uint32_t pid, const std::wstring& process,
+                                    const std::wstring& className) {
     WindowInfo target{};
     bool found = false;
 
     if (hwnd_val != 0) {
         target = find_window_by_hwnd(hwnd_val);
         found = target.hwnd != nullptr;
-    } else if (!title.empty()) {
+    } else {
         auto windows = enumerate_windows(true);
-        auto match = find_best_match(windows, title, exact);
-        if (match) { target = *match; found = true; }
+        auto filtered = filter_windows(windows, pid, pid != 0,
+                                       process, !process.empty(),
+                                       className, !className.empty());
+        if (!title.empty()) {
+            auto match = find_best_match(filtered, title, exact);
+            if (match) { target = *match; found = true; }
+        } else if (!filtered.empty()) {
+            target = filtered[0];
+            found = true;
+        }
     }
 
     if (!found) {
@@ -182,8 +192,11 @@ static std::wstring process_request(const std::wstring& request) {
         auto out = json_get_string(request, L"out");
         auto hwnd_val = json_get_uint64(request, L"hwnd");
         bool exact = json_get_bool(request, L"exact");
+        uint32_t pid = static_cast<uint32_t>(json_get_uint64(request, L"pid"));
+        auto process = json_get_string(request, L"process");
+        auto className = json_get_string(request, L"className");
         if (out.empty()) out = L".";
-        return handle_capture(title, hwnd_val, out, exact);
+        return handle_capture(title, hwnd_val, out, exact, pid, process, className);
     }
     return L"{\"ok\":false,\"errorCode\":\"BAD_ACTION\",\"message\":\"Unknown action\"}";
 }

@@ -38,6 +38,33 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
             opts.require_unique = true;
         } else if (arg == L"--doctor") {
             opts.doctor = true;
+        } else if (arg == L"--pid") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --pid requires a number\n";
+                return false;
+            }
+            opts.pid = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+            opts.has_pid = true;
+        } else if (arg == L"--process") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --process requires an exe name\n";
+                return false;
+            }
+            opts.process = argv[i];
+            opts.has_process = true;
+        } else if (arg == L"--class-name") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --class-name requires a name\n";
+                return false;
+            }
+            opts.className = argv[i];
+            opts.has_className = true;
+        } else if (arg == L"--delay-ms") {
+            if (++i >= argc) {
+                std::wcerr << L"Error: --delay-ms requires a number\n";
+                return false;
+            }
+            opts.delay_ms = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
         } else if (arg == L"--restore") {
             opts.restore = true;
         } else if (arg == L"--title") {
@@ -125,6 +152,10 @@ void print_help() {
         L"  --include-minimized        Include minimized windows in list (default: true)\n"
         L"  --no-restore               Do not try to restore minimized window\n"
         L"  --restore                  Try to restore window before capture (default: true)\n"
+        L"  --pid <pid>                Filter by process ID\n"
+        L"  --process <exe-name>       Filter by process name (e.g. chrome.exe)\n"
+        L"  --class-name <name>        Filter by window class name\n"
+        L"  --delay-ms <number>        Wait before capture (default: 0)\n"
         L"  --require-unique           Fail if multiple windows match (use --list --json first)\n"
         L"  --doctor                   Run environment diagnostics\n"
         L"  --pipe <name>              Named pipe name (default: wgccli)\n"
@@ -147,5 +178,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.0.0\n";
+    std::wcout << L"wgccli 1.3.0\n";
 }
