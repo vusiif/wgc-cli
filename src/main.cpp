@@ -7,6 +7,7 @@
 #include "server.h"
 #include "client.h"
 #include "diagnose.h"
+#include "mcp_server.h"
 
 #include <windows.h>
 #include <iostream>
@@ -30,6 +31,11 @@ int wmain(int argc, wchar_t* argv[]) {
         return 0;
     }
 
+    // MCP stdio server mode
+    if (opts.mcp_stdio) {
+        return run_mcp_server();
+    }
+
     // Server mode
     if (opts.server) {
         return run_server(opts.pipe);
@@ -38,6 +44,11 @@ int wmain(int argc, wchar_t* argv[]) {
     // Client mode
     if (!opts.client.empty()) {
         return run_client(opts.pipe, opts.client);
+    }
+
+    // Health check (ping server)
+    if (opts.health) {
+        return run_client(opts.pipe, L"{\"action\":\"ping\"}");
     }
 
     return run(opts);

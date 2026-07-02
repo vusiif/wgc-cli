@@ -30,6 +30,7 @@ add_executable(wgccli
     src/server.cpp
     src/client.cpp
     src/diagnose.cpp
+    src/mcp_server.cpp
 )
 
 target_include_directories(wgccli PRIVATE

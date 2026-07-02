@@ -214,7 +214,7 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
     return oss.str();
 }
 
-// Minimal JSON value extraction (no external dependency)
+// Minimal JSON value extraction (handles escaped quotes and backslashes)
 static std::wstring json_get_string(const std::wstring& json, const std::wstring& key) {
     std::wstring needle = L"\"" + key + L"\":";
     auto pos = json.find(needle);
@@ -223,9 +223,25 @@ static std::wstring json_get_string(const std::wstring& json, const std::wstring
     while (pos < json.size() && json[pos] == L' ') pos++;
     if (pos >= json.size() || json[pos] != L'"') return L"";
     pos++; // skip opening quote
-    auto end = json.find(L'"', pos);
-    if (end == std::wstring::npos) return L"";
-    return json.substr(pos, end - pos);
+    // Find closing quote, handling escaped chars
+    std::wstring result;
+    while (pos < json.size()) {
+        if (json[pos] == L'\\' && pos + 1 < json.size()) {
+            wchar_t next = json[pos + 1];
+            if (next == L'"') { result += L'"'; pos += 2; }
+            else if (next == L'\\') { result += L'\\'; pos += 2; }
+            else if (next == L'n') { result += L'\n'; pos += 2; }
+            else if (next == L'r') { result += L'\r'; pos += 2; }
+            else if (next == L't') { result += L'\t'; pos += 2; }
+            else { result += next; pos += 2; }
+        } else if (json[pos] == L'"') {
+            break;
+        } else {
+            result += json[pos];
+            pos++;
+        }
+    }
+    return result;
 }
 
 static uint64_t json_get_uint64(const std::wstring& json, const std::wstring& key) {
@@ -248,7 +264,22 @@ static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
 
 static std::wstring process_request(const std::wstring& request) {
     auto action = json_get_string(request, L"action");
-    if (action == L"list") {
+    if (action == L"ping") {
+        // Check if session is interactive
+        HWINSTA ws = GetProcessWindowStation();
+        bool interactive = false;
+        if (ws) {
+            USEROBJECTFLAGS flags{};
+            DWORD needed = 0;
+            if (GetUserObjectInformationW(ws, UOI_FLAGS, &flags, sizeof(flags), &needed))
+                interactive = (flags.dwFlags & WSF_VISIBLE) != 0;
+        }
+        std::wostringstream oss;
+        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.0\""
+            << L",\"userInteractive\":" << (interactive ? L"true" : L"false")
+            << L"}}";
+        return oss.str();
+    } else if (action == L"list") {
         return handle_list();
     } else if (action == L"capture") {
         auto title = json_get_string(request, L"title");

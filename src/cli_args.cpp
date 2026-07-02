@@ -50,6 +50,10 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
             opts.require_unique = true;
         } else if (arg == L"--doctor") {
             opts.doctor = true;
+        } else if (arg == L"--health") {
+            opts.health = true;
+        } else if (arg == L"--mcp-stdio") {
+            opts.mcp_stdio = true;
         } else if (arg == L"--pid") {
             if (++i >= argc) {
                 std::wcerr << L"Error: --pid requires a number\n";
@@ -264,6 +268,8 @@ void print_help() {
         L"  --crop <x,y,w,h>           Crop region after capture\n"
         L"  --require-unique           Fail if multiple windows match (use --list --json first)\n"
         L"  --doctor                   Run environment diagnostics\n"
+        L"  --health                   Ping running server and exit\n"
+        L"  --mcp-stdio                Start MCP stdio server (JSON-RPC over stdin/stdout)\n"
         L"  --pipe <name>              Named pipe name (default: wgccli)\n"
         L"  --help                     Print this help\n"
         L"  --version                  Print version\n"
@@ -284,5 +290,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.6.0\n";
+    std::wcout << L"wgccli 1.7.0\n";
 }

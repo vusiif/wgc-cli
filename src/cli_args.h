@@ -34,6 +34,8 @@ struct Options {
     std::wstring pipe = L"wgccli";
     bool require_unique = false;
     bool doctor = false;
+    bool health = false;
+    bool mcp_stdio = false;
     uint32_t pid = 0;
     bool has_pid = false;
     std::wstring process;

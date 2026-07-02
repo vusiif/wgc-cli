@@ -59,6 +59,27 @@ wgccli.exe --client "{\"action\":\"capture\",\"process\":\"chrome.exe\",\"out\":
 
 使用 `--pipe <name>` 自定义管道名称（默认：`wgccli`）。
 
+检查服务器健康状态：
+
+```bash
+wgccli.exe --health
+```
+
+## MCP Stdio Server（Claude Code / Cursor 等）
+
+wgccli 可作为 MCP（Model Context Protocol）stdio 服务器运行，通过 stdin/stdout 通信，IDE 内的 AI Agent 可直接调用截图。
+
+```bash
+wgccli.exe --mcp-stdio
+```
+
+注册的工具：
+
+| 工具 | 说明 |
+|---|---|
+| `list_windows` | 列出所有可见顶层窗口 |
+| `capture_window` | 截图（按标题、HWND、PID 或进程名） |
+
 ## 参数说明
 
 ### 选择器（截图时至少指定一个）
@@ -104,6 +125,8 @@ wgccli.exe --client "{\"action\":\"capture\",\"process\":\"chrome.exe\",\"out\":
 |---|---|
 | `--server` | 启动命名管道服务器 |
 | `--client <json>` | 通过管道发送请求 |
+| `--health` | 检查服务器健康状态并退出 |
+| `--mcp-stdio` | 启动 MCP stdio 服务器（JSON-RPC over stdin/stdout） |
 | `--pipe <名称>` | 自定义管道名（默认：`wgccli`） |
 | `--doctor` | 运行环境诊断 |
 | `--help` | 打印帮助 |

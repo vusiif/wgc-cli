@@ -59,6 +59,28 @@ wgccli.exe --client "{\"action\":\"capture\",\"process\":\"chrome.exe\",\"out\":
 
 Use `--pipe <name>` to customize the pipe name (default: `wgccli`).
 
+Ping the server to check health:
+
+```bash
+wgccli.exe --health
+```
+
+## MCP Stdio Server (for Claude Code, Cursor, etc.)
+
+wgccli can run as an MCP (Model Context Protocol) server over stdin/stdout, allowing IDE-integrated AI agents to capture screenshots directly.
+
+```bash
+# Start MCP server
+wgccli.exe --mcp-stdio
+```
+
+Registered tools:
+
+| Tool | Description |
+|---|---|
+| `list_windows` | List all visible top-level windows |
+| `capture_window` | Capture a screenshot (by title, HWND, PID, or process name) |
+
 ## Parameters
 
 ### Selectors (at least one required for capture)
@@ -104,6 +126,8 @@ Use `--pipe <name>` to customize the pipe name (default: `wgccli`).
 |---|---|
 | `--server` | Start named pipe server |
 | `--client <json>` | Send request to server via pipe |
+| `--health` | Ping running server and exit |
+| `--mcp-stdio` | Start MCP stdio server (JSON-RPC over stdin/stdout) |
 | `--pipe <name>` | Custom pipe name (default: `wgccli`) |
 | `--doctor` | Run environment diagnostics |
 | `--help` | Print help |
