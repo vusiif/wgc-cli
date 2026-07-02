@@ -79,7 +79,7 @@ wgccli.exe --client "{\"action\":\"capture\",\"process\":\"chrome.exe\",\"out\":
 |---|---|
 | `--out <目录或文件>` | 输出目录或完整文件路径 |
 | `--json` | JSON 格式输出 |
-| `--format <png\|jpg\|bmp>` | 输出格式（默认：png） |
+| `--format <png\|jpg\|jpeg\|bmp>` | 输出格式（默认：png） |
 
 ### 图像处理
 

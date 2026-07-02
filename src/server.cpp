@@ -5,10 +5,71 @@
 #include "image_wic.h"
 
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
 #include <iostream>
 #include <sstream>
+#include <vector>
 #include <filesystem>
 #include <iomanip>
+
+// Build DACL: current user + LocalSystem only
+// Returns true on success. Caller must free *out_acl with LocalFree when done.
+static bool build_pipe_security(SECURITY_ATTRIBUTES& sa, SECURITY_DESCRIPTOR& sd,
+                                 std::vector<BYTE>& sid_buf, ACL** out_acl) {
+    if (!InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION))
+        return false;
+
+    // Get current user SID
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return false;
+
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    sid_buf.resize(needed);
+    BOOL ok = GetTokenInformation(token, TokenUser, sid_buf.data(), needed, &needed);
+    CloseHandle(token);
+    if (!ok) return false;
+
+    auto user_sid = reinterpret_cast<PTOKEN_USER>(sid_buf.data())->User.Sid;
+
+    // LocalSystem SID
+    PSID system_sid = nullptr;
+    if (!ConvertStringSidToSidW(L"S-1-5-18", &system_sid))
+        return false;
+
+    EXPLICIT_ACCESSW ea[2] = {};
+    ea[0].grfAccessPermissions = GENERIC_READ | GENERIC_WRITE;
+    ea[0].grfAccessMode = SET_ACCESS;
+    ea[0].grfInheritance = NO_INHERITANCE;
+    ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    ea[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
+    ea[0].Trustee.ptstrName = static_cast<LPWSTR>(user_sid);
+
+    ea[1].grfAccessPermissions = GENERIC_READ | GENERIC_WRITE;
+    ea[1].grfAccessMode = SET_ACCESS;
+    ea[1].grfInheritance = NO_INHERITANCE;
+    ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    ea[1].Trustee.TrusteeType = TRUSTEE_IS_USER;
+    ea[1].Trustee.ptstrName = static_cast<LPWSTR>(system_sid);
+
+    ACL* acl = nullptr;
+    DWORD acl_err = SetEntriesInAclW(2, ea, nullptr, &acl);
+    LocalFree(system_sid);
+    if (acl_err != ERROR_SUCCESS) return false;
+
+    if (!SetSecurityDescriptorDacl(&sd, TRUE, acl, FALSE)) {
+        LocalFree(acl);
+        return false;
+    }
+
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = &sd;
+    sa.bInheritHandle = FALSE;
+    *out_acl = acl;
+    return true;
+}
 
 static std::wstring escape_json(const std::wstring& s) {
     std::wostringstream oss;
@@ -209,13 +270,24 @@ int run_server(const std::wstring& pipe_name) {
     std::wcerr << L"[server] Agent connects via: wgccli.exe --client <json>\n";
     std::wcerr << L"[server] Press Ctrl+C to stop.\n";
 
+    // Build DACL: current user + LocalSystem only
+    SECURITY_ATTRIBUTES sa{};
+    SECURITY_DESCRIPTOR sd{};
+    std::vector<BYTE> sid_buf;
+    ACL* acl = nullptr;
+    bool has_dacl = build_pipe_security(sa, sd, sid_buf, &acl);
+    if (!has_dacl) {
+        std::wcerr << L"[server] Warning: failed to build DACL, using default security\n";
+    }
+
     while (true) {
         HANDLE hPipe = CreateNamedPipeW(
             full_pipe.c_str(),
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
-            65536, 65536, 0, nullptr);
+            65536, 65536, 0,
+            has_dacl ? &sa : nullptr);
 
         if (hPipe == INVALID_HANDLE_VALUE) {
             std::wcerr << L"[server] CreateNamedPipe failed: " << GetLastError() << L"\n";

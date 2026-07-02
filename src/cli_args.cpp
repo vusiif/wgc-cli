@@ -8,6 +8,18 @@ static std::wstring to_lower(std::wstring s) {
     return s;
 }
 
+// Strict u32 parse: non-empty, fully consumed, no negative, no overflow
+static bool parse_u32_strict(const std::wstring& s, uint32_t& out) {
+    if (s.empty()) return false;
+    if (s[0] == L'-') return false;
+    wchar_t* end = nullptr;
+    unsigned long val = std::wcstoul(s.c_str(), &end, 10);
+    if (end != s.c_str() + s.size()) return false;  // trailing chars
+    if (val > UINT32_MAX) return false;
+    out = static_cast<uint32_t>(val);
+    return true;
+}
+
 static uint64_t parse_hwnd_str(const std::wstring& s) {
     if (s.empty()) return 0;
     if (s.size() > 2 && s[0] == L'0' && (s[1] == L'x' || s[1] == L'X')) {
@@ -43,7 +55,10 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 std::wcerr << L"Error: --pid requires a number\n";
                 return false;
             }
-            opts.pid = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+            if (!parse_u32_strict(argv[i], opts.pid)) {
+                std::wcerr << L"Error: --pid requires a valid number, got: " << argv[i] << L"\n";
+                return false;
+            }
             opts.has_pid = true;
         } else if (arg == L"--process") {
             if (++i >= argc) {
@@ -64,13 +79,19 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 std::wcerr << L"Error: --delay-ms requires a number\n";
                 return false;
             }
-            opts.delay_ms = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+            if (!parse_u32_strict(argv[i], opts.delay_ms)) {
+                std::wcerr << L"Error: --delay-ms requires a valid number, got: " << argv[i] << L"\n";
+                return false;
+            }
         } else if (arg == L"--max-width") {
             if (++i >= argc) {
                 std::wcerr << L"Error: --max-width requires a number\n";
                 return false;
             }
-            opts.max_width = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+            if (!parse_u32_strict(argv[i], opts.max_width)) {
+                std::wcerr << L"Error: --max-width requires a valid number, got: " << argv[i] << L"\n";
+                return false;
+            }
         } else if (arg == L"--resize") {
             if (++i >= argc) {
                 std::wcerr << L"Error: --resize requires WxH (e.g. 1024x768)\n";
@@ -78,29 +99,70 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
             }
             std::wstring s = argv[i];
             auto xpos = s.find(L'x');
-            if (xpos == std::wstring::npos) {
+            if (xpos == std::wstring::npos) xpos = s.find(L'X');
+            if (xpos == std::wstring::npos || xpos == 0 || xpos == s.size() - 1) {
                 std::wcerr << L"Error: --resize format is WxH (e.g. 1024x768)\n";
                 return false;
             }
-            opts.resize_w = static_cast<uint32_t>(std::wcstoul(s.c_str(), nullptr, 10));
-            opts.resize_h = static_cast<uint32_t>(std::wcstoul(s.c_str() + xpos + 1, nullptr, 10));
+            if (!parse_u32_strict(s.substr(0, xpos), opts.resize_w) ||
+                !parse_u32_strict(s.substr(xpos + 1), opts.resize_h)) {
+                std::wcerr << L"Error: --resize requires positive integers in WxH format, got: " << s << L"\n";
+                return false;
+            }
         } else if (arg == L"--format") {
             if (++i >= argc) {
-                std::wcerr << L"Error: --format requires png, jpg, or bmp\n";
+                std::wcerr << L"Error: --format requires png, jpg, jpeg, or bmp\n";
                 return false;
             }
             opts.format = argv[i];
+            {
+                std::wstring fmt_lower = to_lower(opts.format);
+                if (fmt_lower != L"png" && fmt_lower != L"jpg" &&
+                    fmt_lower != L"jpeg" && fmt_lower != L"bmp") {
+                    std::wcerr << L"Error: --format must be png, jpg, jpeg, or bmp, got: " << argv[i] << L"\n";
+                    return false;
+                }
+            }
         } else if (arg == L"--crop") {
             if (++i >= argc) {
                 std::wcerr << L"Error: --crop requires x,y,w,h\n";
                 return false;
             }
             std::wstring s = argv[i];
-            wchar_t* end;
-            opts.crop_x = static_cast<uint32_t>(std::wcstoul(s.c_str(), &end, 10));
-            opts.crop_y = static_cast<uint32_t>(std::wcstoul(end + 1, &end, 10));
-            opts.crop_w = static_cast<uint32_t>(std::wcstoul(end + 1, &end, 10));
-            opts.crop_h = static_cast<uint32_t>(std::wcstoul(end + 1, nullptr, 10));
+            // Parse x,y,w,h with strict validation
+            {
+                const wchar_t* p = s.c_str();
+                wchar_t* end = nullptr;
+                uint32_t parts[4] = {};
+                for (int j = 0; j < 4; ++j) {
+                    if (*p == L'\0') {
+                        std::wcerr << L"Error: --crop requires 4 values (x,y,w,h), got: " << s << L"\n";
+                        return false;
+                    }
+                    unsigned long val = std::wcstoul(p, &end, 10);
+                    if (end == p || val > UINT32_MAX) {
+                        std::wcerr << L"Error: --crop value " << (j+1) << " is invalid in: " << s << L"\n";
+                        return false;
+                    }
+                    parts[j] = static_cast<uint32_t>(val);
+                    p = end;
+                    if (j < 3) {
+                        if (*p != L',') {
+                            std::wcerr << L"Error: --crop format is x,y,w,h, got: " << s << L"\n";
+                            return false;
+                        }
+                        p++; // skip comma
+                    }
+                }
+                if (*p != L'\0') {
+                    std::wcerr << L"Error: --crop trailing characters in: " << s << L"\n";
+                    return false;
+                }
+                opts.crop_x = parts[0];
+                opts.crop_y = parts[1];
+                opts.crop_w = parts[2];
+                opts.crop_h = parts[3];
+            }
             opts.has_crop = true;
         } else if (arg == L"--restore") {
             opts.restore = true;
@@ -133,7 +195,10 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 std::wcerr << L"Error: --timeout-ms requires an argument\n";
                 return false;
             }
-            opts.timeout_ms = static_cast<uint32_t>(std::wcstoul(argv[i], nullptr, 10));
+            if (!parse_u32_strict(argv[i], opts.timeout_ms)) {
+                std::wcerr << L"Error: --timeout-ms requires a valid number, got: " << argv[i] << L"\n";
+                return false;
+            }
         } else if (arg == L"--server") {
             opts.server = true;
         } else if (arg == L"--client") {
@@ -195,7 +260,7 @@ void print_help() {
         L"  --delay-ms <number>        Wait before capture (default: 0)\n"
         L"  --max-width <number>       Scale down to max width (proportional)\n"
         L"  --resize <WxH>             Resize to exact dimensions (e.g. 1024x768)\n"
-        L"  --format <png|jpg|bmp>     Output format (default: png)\n"
+        L"  --format <png|jpg|jpeg|bmp> Output format (default: png)\n"
         L"  --crop <x,y,w,h>           Crop region after capture\n"
         L"  --require-unique           Fail if multiple windows match (use --list --json first)\n"
         L"  --doctor                   Run environment diagnostics\n"
@@ -219,5 +284,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.5.0\n";
+    std::wcout << L"wgccli 1.6.0\n";
 }

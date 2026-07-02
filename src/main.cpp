@@ -184,6 +184,17 @@ static int run(const Options& opts) {
 
     // Crop
     if (opts.has_crop) {
+        if (opts.crop_w == 0 || opts.crop_h == 0) {
+            output_error(opts, ExitCode::BadArgs, L"CROP_INVALID_SIZE",
+                L"Crop width and height must be > 0");
+            return static_cast<int>(ExitCode::BadArgs);
+        }
+        if (opts.crop_x >= captured.width || opts.crop_y >= captured.height) {
+            output_error(opts, ExitCode::BadArgs, L"CROP_OUT_OF_BOUNDS",
+                L"Crop origin (" + std::to_wstring(opts.crop_x) + L"," + std::to_wstring(opts.crop_y) +
+                L") is outside image (" + std::to_wstring(captured.width) + L"x" + std::to_wstring(captured.height) + L")");
+            return static_cast<int>(ExitCode::BadArgs);
+        }
         captured = crop_image(captured, opts.crop_x, opts.crop_y, opts.crop_w, opts.crop_h);
     }
 

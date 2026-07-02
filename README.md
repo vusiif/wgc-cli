@@ -79,7 +79,7 @@ Use `--pipe <name>` to customize the pipe name (default: `wgccli`).
 |---|---|
 | `--out <dir-or-file>` | Output directory or full file path |
 | `--json` | JSON output |
-| `--format <png\|jpg\|bmp>` | Output format (default: png) |
+| `--format <png\|jpg\|jpeg\|bmp>` | Output format (default: png) |
 
 ### Image Processing
 
