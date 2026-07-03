@@ -7,7 +7,7 @@ description: Capture screenshots of Windows GUI application windows using wgccli
 
 Use this skill when you need to visually inspect a Windows GUI window from an agent workflow.
 
-`wgccli.exe` captures Windows application windows by title or HWND using Windows.Graphics.Capture. It is especially useful when an agent needs screenshots of apps such as Android Studio, Chrome, Notepad, emulators, installers, or desktop tools.
+`wgccli.exe` captures Windows application windows by title, HWND, PID, process name, or window class using Windows.Graphics.Capture. It is especially useful when an agent needs screenshots of apps such as Android Studio, Chrome, Notepad, emulators, installers, or desktop tools.
 
 ## When to use
 
@@ -64,10 +64,10 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 When the target title is uncertain, first list visible windows:
 
 ```powershell
-wgccli.exe --list
+wgccli.exe --list --json
 ```
 
-Use the output to identify a stable title or HWND.
+Use the output to identify a stable title, HWND, PID, or process name.
 
 Prefer HWND capture when multiple windows have similar titles.
 
@@ -95,7 +95,24 @@ Use HWND when available from `--list` or previous output:
 wgccli.exe --hwnd 0x0000000000123456 --out "$env:TEMP\agent-screenshots" --json
 ```
 
-### 5. Parse JSON output
+### 5. Capture by PID or process name
+
+Use `--pid` or `--process` to filter by process. Combine with `--title` for precision:
+
+```powershell
+# By PID
+wgccli.exe --pid 12345 --out "$env:TEMP\agent-screenshots" --json
+
+# By process name + title
+wgccli.exe --process chrome.exe --title "ChatGPT" --out "$env:TEMP\agent-screenshots" --json
+
+# By window class
+wgccli.exe --class-name "SunAwtFrame" --out "$env:TEMP\agent-screenshots" --json
+```
+
+When `--pid`/`--process`/`--class-name` matches multiple windows without `--title`, the tool fails with `AMBIGUOUS_MATCH`. Use `--list --json` to find the exact HWND first.
+
+### 6. Parse JSON output
 
 Always prefer `--json` for agent workflows.
 
@@ -110,8 +127,10 @@ Expected successful shape:
     "pid": 12345,
     "width": 1920,
     "height": 1080,
+    "className": "SunAwtFrame",
     "state": "normal"
   },
+  "candidates": [...],
   "screenshotPath": "C:\\Screenshots\\20260523-153022-android-studio.png"
 }
 ```
@@ -121,7 +140,7 @@ After capture:
 1. Confirm `ok` is true.
 2. Read `screenshotPath`.
 3. Verify the file exists.
-4. Use the agent’s image-viewing capability to inspect the PNG.
+4. Use the agent's image-viewing capability to inspect the PNG.
 
 PowerShell example:
 
@@ -129,7 +148,7 @@ PowerShell example:
 $json = wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --json | ConvertFrom-Json
 
 if (-not $json.ok) {
-    throw "wgccli capture failed"
+    throw "wgccli capture failed: $($json.errorCode) - $($json.message)"
 }
 
 if (-not (Test-Path $json.screenshotPath)) {
@@ -139,11 +158,53 @@ if (-not (Test-Path $json.screenshotPath)) {
 $json.screenshotPath
 ```
 
+## Image processing options
+
+### Scale down to save tokens
+
+Use `--max-width` to scale down large screenshots, saving VLM tokens:
+
+```powershell
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --max-width 1280 --format jpg --json
+```
+
+### Resize to exact dimensions
+
+```powershell
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --resize 1024x768 --json
+```
+
+### Crop a region
+
+```powershell
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --crop 100,100,800,600 --json
+```
+
+### Output format
+
+```powershell
+# JPEG (smaller files, good for screenshots)
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --format jpg --json
+
+# BMP (lossless, large files)
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --format bmp --json
+```
+
+Supported formats: `png` (default), `jpg`, `jpeg`, `bmp`.
+
+### Delay before capture
+
+Wait for animations or loading to finish:
+
+```powershell
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --delay-ms 2000 --json
+```
+
 ## Server/client mode for agent session isolation
 
 Use server/client mode when the agent runs in a different Windows session from the interactive desktop, such as SSH, service execution, scheduled jobs, or remote automation.
 
-### Start server in the user’s interactive desktop session
+### Start server in the user's interactive desktop session
 
 This must be started where the GUI windows are accessible:
 
@@ -157,30 +218,101 @@ Optionally use a custom pipe name:
 wgccli.exe --server --pipe my-agent-wgc
 ```
 
+### Check server health
+
+```powershell
+wgccli.exe --health
+```
+
+Returns `{"ok":true,"server":{"version":"1.7.1","userInteractive":true}}` if the server is running.
+
 ### Send requests from the agent session
 
 List windows:
 
 ```powershell
-wgccli.exe --client "{\"action\":\"list\"}"
+wgccli.exe --client '{"action":"list"}'
 ```
 
 Capture by title:
 
 ```powershell
-wgccli.exe --client "{\"action\":\"capture\",\"title\":\"Chrome\",\"out\":\"C:\\Temp\\agent-screenshots\"}"
+wgccli.exe --client '{"action":"capture","title":"Notepad","out":"C:\\Temp\\agent-screenshots"}'
 ```
 
-Capture by HWND:
+Capture by PID or process:
 
 ```powershell
-wgccli.exe --client "{\"action\":\"capture\",\"hwnd\":12345,\"out\":\"C:\\Temp\\agent-screenshots\"}"
+wgccli.exe --client '{"action":"capture","process":"chrome.exe","out":"C:\\Temp\\agent-screenshots"}'
 ```
 
 Use a custom pipe name if the server was started with one:
 
 ```powershell
-wgccli.exe --pipe my-agent-wgc --client "{\"action\":\"list\"}"
+wgccli.exe --pipe my-agent-wgc --client '{"action":"list"}'
+```
+
+## MCP stdio server for IDE-integrated agents
+
+Use MCP mode when the agent runs inside Claude Code, Cursor, Codex, or any MCP-compatible client.
+
+### Start MCP server
+
+```powershell
+wgccli.exe --mcp-stdio
+```
+
+The server speaks JSON-RPC 2.0 over stdin/stdout.
+
+### Registered MCP tools
+
+| Tool | Description |
+|---|---|
+| `list_windows` | List all visible top-level windows. Optional: `include_minimized` (boolean, default true) |
+| `capture_window` | Capture a screenshot. Required: `out`. Optional: `title`, `hwnd`, `pid`, `process`, `class_name`, `format`, `max_width`, `resize`, `crop`, `timeout_ms`, `exact` |
+
+### MCP tool call examples
+
+List windows:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_windows","arguments":{}}}
+```
+
+Capture by title:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"capture_window","arguments":{"title":"Notepad","out":"C:\\Temp"}}}
+```
+
+Capture with options:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"capture_window","arguments":{"title":"Chrome","out":"C:\\Temp","format":"jpg","max_width":1280,"exact":true}}}
+```
+
+## Environment diagnostics
+
+Run `--doctor` to check if the environment supports window capture:
+
+```powershell
+wgccli.exe --doctor --json
+```
+
+Output:
+
+```json
+{
+  "ok": true,
+  "osBuild": 26100,
+  "minSupportedBuild": 18362,
+  "compatible": true,
+  "wgcAvailable": true,
+  "d3d11Available": true,
+  "interactiveSession": true,
+  "elevated": false,
+  "windowsCount": 12
+}
 ```
 
 ## Recommended agent procedure
@@ -190,7 +322,7 @@ Follow this order:
 1. Check that the environment is Windows.
 2. Check that `wgccli.exe` exists.
 3. Create an output directory.
-4. If the target window is ambiguous, run `--list`.
+4. If the target window is ambiguous, run `--list --json`.
 5. Prefer exact title or HWND when possible.
 6. Run capture with `--json`.
 7. Parse `screenshotPath`.
@@ -204,7 +336,7 @@ When matching by title:
 
 1. Prefer exact match for known full titles.
 2. Use partial match for broad app names.
-3. If multiple windows match, run `--list` and capture by HWND.
+3. If multiple windows match, run `--list --json` and capture by HWND.
 4. Avoid overly generic titles such as `"Chrome"`, `"Settings"`, or `"Untitled"` when precision matters.
 5. If a minimized window fails, retry after restoring it manually or without relying on minimized capture.
 
@@ -221,7 +353,7 @@ Symptoms:
 Actions:
 
 ```powershell
-wgccli.exe --list
+wgccli.exe --list --json
 ```
 
 Then retry with:
@@ -239,55 +371,71 @@ Symptoms:
 
 Actions:
 
-* Confirm Windows 10 version 1809 or later.
+* Confirm Windows 10 version 1903 (build 18362) or later.
 * Confirm a D3D11-capable GPU is available.
 * Confirm the app is running in the interactive desktop session.
+* Run `wgccli.exe --doctor --json` for details.
 
 ### Capture failed
 
 Symptoms:
 
 * Exit code `5`
-* Window exists but PNG is not saved.
+* Error codes: `CAPTURE_FAILED`, `D3D11_INIT_FAILED`
+* JSON includes `stage`, `hresult`, `suggestion` fields
 
 Actions:
 
+* Check the `stage` field: `CreateForWindow`, `GetTextureFromSurface`, `CreateTexture2D`, `Map`, `FrameArrived`
+* Check `hresult` for specific D3D/WGC error codes.
+* Follow the `suggestion` in the JSON output.
 * Check whether the window is protected, elevated, DRM-rendered, or on a secure desktop.
 * Try running the agent or server with matching privileges.
 * Try server/client mode from the interactive user session.
-* Try another window to confirm the tool works.
-
-### Save PNG failed
-
-Symptoms:
-
-* Exit code `6`
-
-Actions:
-
-* Confirm the output directory exists.
-* Confirm write permissions.
-* Try a simple path such as:
-
-```powershell
-C:\Temp\agent-screenshots
-```
 
 ### Timeout
 
 Symptoms:
 
 * Exit code `7`
+* `errorCode: "TIMEOUT"`
 
 Actions:
 
 * Increase timeout:
 
 ```powershell
-wgccli.exe --title "Chrome" --out "C:\Temp\agent-screenshots" --json --timeout-ms 8000
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --json --timeout-ms 8000
 ```
 
 * Confirm the target window is visible and responsive.
+* Try `--restore` if the window may be minimized.
+
+### Save failed
+
+Symptoms:
+
+* Exit code `6`
+* `errorCode: "SAVE_FAILED"`
+
+Actions:
+
+* Confirm the output directory exists.
+* Confirm write permissions.
+* Try a simple path such as `C:\Temp\agent-screenshots`.
+
+### Ambiguous match
+
+Symptoms:
+
+* `errorCode: "AMBIGUOUS_MATCH"`
+* Multiple windows match `--pid`/`--process`/`--class-name`
+
+Actions:
+
+* Add `--title` to narrow the match.
+* Use `--hwnd` from `--list --json` output.
+* Use `--require-unique` to fail early on ambiguity.
 
 ### Permission denied
 
@@ -308,10 +456,10 @@ Actions:
 |    0 | Success                                |
 |    1 | General error                          |
 |    2 | Bad arguments                          |
-|    3 | Window not found                       |
+|    3 | Window not found / ambiguous match     |
 |    4 | Windows.Graphics.Capture not available |
 |    5 | Capture failed                         |
-|    6 | Save PNG failed                        |
+|    6 | Save failed                            |
 |    7 | Timeout                                |
 |    8 | Permission denied                      |
 
@@ -320,31 +468,55 @@ Actions:
 List visible windows:
 
 ```powershell
-wgccli.exe --list
+wgccli.exe --list --json
 ```
 
 Capture by title:
 
 ```powershell
-wgccli.exe --title "Notepad" --out "C:\Temp\agent-screenshots" --json
+wgccli.exe --title "Notepad" --out "$env:TEMP\agent-screenshots" --json
 ```
 
 Capture by exact title:
 
 ```powershell
-wgccli.exe --title "Android Studio - MyProject" --exact --out "C:\Temp\agent-screenshots" --json
+wgccli.exe --title "Android Studio - MyProject" --exact --out "$env:TEMP\agent-screenshots" --json
 ```
 
 Capture by HWND:
 
 ```powershell
-wgccli.exe --hwnd 0x0000000000123456 --out "C:\Temp\agent-screenshots" --json
+wgccli.exe --hwnd 0x0000000000123456 --out "$env:TEMP\agent-screenshots" --json
+```
+
+Capture by PID:
+
+```powershell
+wgccli.exe --pid 12345 --out "$env:TEMP\agent-screenshots" --json
+```
+
+Capture by process + title:
+
+```powershell
+wgccli.exe --process chrome.exe --title "ChatGPT" --out "$env:TEMP\agent-screenshots" --json
+```
+
+Capture with image processing:
+
+```powershell
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --max-width 1280 --format jpg --json
 ```
 
 Capture with longer timeout:
 
 ```powershell
-wgccli.exe --title "Chrome" --out "C:\Temp\agent-screenshots" --json --timeout-ms 8000
+wgccli.exe --title "Chrome" --out "$env:TEMP\agent-screenshots" --json --timeout-ms 8000
+```
+
+Environment diagnostics:
+
+```powershell
+wgccli.exe --doctor --json
 ```
 
 Start server:
@@ -353,16 +525,28 @@ Start server:
 wgccli.exe --server
 ```
 
+Check server health:
+
+```powershell
+wgccli.exe --health
+```
+
 Client list request:
 
 ```powershell
-wgccli.exe --client "{\"action\":\"list\"}"
+wgccli.exe --client '{"action":"list"}'
 ```
 
 Client capture request:
 
 ```powershell
-wgccli.exe --client "{\"action\":\"capture\",\"title\":\"Notepad\",\"out\":\"C:\\Temp\\agent-screenshots\"}"
+wgccli.exe --client '{"action":"capture","title":"Notepad","out":"C:\\Temp\\agent-screenshots"}'
+```
+
+Start MCP server:
+
+```powershell
+wgccli.exe --mcp-stdio
 ```
 
 ## Safety and reliability rules
@@ -387,17 +571,26 @@ param(
 
     [string]$OutDir = "$env:TEMP\agent-screenshots",
 
-    [switch]$Exact
+    [switch]$Exact,
+
+    [string]$Format = "png",
+
+    [int]$MaxWidth = 0
 )
 
 $ErrorActionPreference = "Stop"
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$cmd = @("wgccli.exe", "--title", $Title, "--out", $OutDir, "--json")
+$cmd = @("wgccli.exe", "--title", $Title, "--out", $OutDir, "--json", "--format", $Format)
 
 if ($Exact) {
     $cmd += "--exact"
+}
+
+if ($MaxWidth -gt 0) {
+    $cmd += "--max-width"
+    $cmd += "$MaxWidth"
 }
 
 $output = & $cmd[0] $cmd[1..($cmd.Length - 1)]
@@ -409,7 +602,7 @@ if ($LASTEXITCODE -ne 0) {
 $json = $output | ConvertFrom-Json
 
 if (-not $json.ok) {
-    throw "wgccli returned ok=false. Output: $output"
+    throw "wgccli returned ok=false: $($json.errorCode) - $($json.message)"
 }
 
 if (-not (Test-Path $json.screenshotPath)) {
@@ -419,19 +612,10 @@ if (-not (Test-Path $json.screenshotPath)) {
 Write-Output $json.screenshotPath
 ```
 
-## Example agent reasoning pattern
-
-When asked to inspect a Windows app:
-
-1. “I need a visual screenshot of the target app.”
-2. “I will list windows if the exact title is unknown.”
-3. “I will capture using `wgccli.exe --json`.”
-4. “I will inspect the returned PNG path.”
-5. “I will report what is visible, and mention uncertainty if the screenshot is unclear.”
-
 ## Limitations
 
-* Minimized windows may not be capturable.
+* Minimized windows may not be capturable (auto-restore is attempted).
 * Some protected, elevated, DRM-rendered, secure desktop, or cross-session windows may fail.
 * Cursor capture is not included.
 * Windows from another session or desktop require server/client mode or may be inaccessible.
+* Windows 10 version 1903 (build 18362) or later is required.
