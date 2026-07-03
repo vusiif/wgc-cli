@@ -192,7 +192,7 @@ static std::wstring handle_initialize(int64_t id) {
     return make_response(id,
         L"{\"protocolVersion\":\"2024-11-05\""
         L",\"capabilities\":{\"tools\":{}}"
-        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.2\"}}");
+        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.3\"}}");
 }
 
 static std::wstring handle_tools_list(int64_t id) {

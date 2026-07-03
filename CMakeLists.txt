@@ -50,6 +50,24 @@ target_compile_definitions(wgccli PRIVATE
 
 target_compile_options(wgccli PRIVATE /bigobj /EHsc)
 
+# Size optimization for release builds
+if(MSVC)
+  target_compile_options(wgccli PRIVATE
+    $<$<CONFIG:Release>:/O1>      # size-optimized code
+    $<$<CONFIG:Release>:/GL>      # whole program optimization
+    $<$<CONFIG:Release>:/Gy>      # function-level linking
+    $<$<CONFIG:Release>:/Gw>      # global data optimization
+    $<$<CONFIG:Release>:/GF>      # merge duplicate strings
+    $<$<CONFIG:Release>:/Zc:inline>
+  )
+  target_link_options(wgccli PRIVATE
+    $<$<CONFIG:Release>:/LTCG>
+    $<$<CONFIG:Release>:/OPT:REF>
+    $<$<CONFIG:Release>:/OPT:ICF>
+    $<$<CONFIG:Release>:/INCREMENTAL:NO>
+  )
+endif()
+
 target_link_libraries(wgccli PRIVATE
     d3d11
     dxgi

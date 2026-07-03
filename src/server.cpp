@@ -281,7 +281,7 @@ static std::wstring process_request(const std::wstring& request) {
                 interactive = (flags.dwFlags & WSF_VISIBLE) != 0;
         }
         std::wostringstream oss;
-        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.2\""
+        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.3\""
             << L",\"userInteractive\":" << (interactive ? L"true" : L"false")
             << L"}}";
         return oss.str();
