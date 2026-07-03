@@ -190,16 +190,20 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
     for (auto& c : out_ext) c = towlower(c);
     bool is_file = (out_ext == L".png" || out_ext == L".jpg" || out_ext == L".jpeg"
                  || out_ext == L".bmp");
+    // Infer format from extension
+    std::wstring fmt = L"png";
+    if (out_ext == L".jpg" || out_ext == L".jpeg") fmt = L"jpg";
+    else if (out_ext == L".bmp") fmt = L"bmp";
     if (is_file) {
         out_path = out;
         auto parent = std::filesystem::path(out_path).parent_path();
         if (!parent.empty()) std::filesystem::create_directories(parent);
     } else {
         std::filesystem::create_directories(out);
-        out_path = generate_output_path(out, target.title, L"png");
+        out_path = generate_output_path(out, target.title, fmt);
     }
 
-    if (!save_image(*capture_result.image, out_path, L"png")) {
+    if (!save_image(*capture_result.image, out_path, fmt)) {
         return L"{\"ok\":false,\"errorCode\":\"SAVE_FAILED\",\"message\":\"PNG save failed\",\"suggestion\":\"Check output directory exists and is writable.\"}";
     }
 
@@ -277,7 +281,7 @@ static std::wstring process_request(const std::wstring& request) {
                 interactive = (flags.dwFlags & WSF_VISIBLE) != 0;
         }
         std::wostringstream oss;
-        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.1\""
+        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.2\""
             << L",\"userInteractive\":" << (interactive ? L"true" : L"false")
             << L"}}";
         return oss.str();
@@ -338,7 +342,20 @@ int run_server(const std::wstring& pipe_name) {
         // Read request
         wchar_t buf[32768]{};
         DWORD bytes_read = 0;
-        if (!ReadFile(hPipe, buf, sizeof(buf) - sizeof(wchar_t), &bytes_read, nullptr) || bytes_read == 0) {
+        BOOL read_ok = ReadFile(hPipe, buf, sizeof(buf) - sizeof(wchar_t), &bytes_read, nullptr);
+        if (!read_ok) {
+            if (GetLastError() == ERROR_MORE_DATA) {
+                // Message too large for buffer
+                const wchar_t* err = L"{\"ok\":false,\"errorCode\":\"REQUEST_TOO_LARGE\",\"message\":\"Request exceeds 64KB buffer\"}";
+                DWORD err_written = 0;
+                WriteFile(hPipe, err, static_cast<DWORD>(wcslen(err) * sizeof(wchar_t)), &err_written, nullptr);
+                FlushFileBuffers(hPipe);
+            }
+            DisconnectNamedPipe(hPipe);
+            CloseHandle(hPipe);
+            continue;
+        }
+        if (bytes_read == 0) {
             DisconnectNamedPipe(hPipe);
             CloseHandle(hPipe);
             continue;

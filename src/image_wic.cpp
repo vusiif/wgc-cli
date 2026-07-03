@@ -54,6 +54,9 @@ bool save_image(const CapturedImage& image, const std::wstring& path, const std:
     hr = frame->SetPixelFormat(&pix_fmt);
     if (FAILED(hr)) return false;
 
+    // If encoder changed the pixel format, convert via WIC
+    bool need_convert = (pix_fmt != GUID_WICPixelFormat32bppBGRA);
+
     // JPEG quality
     if (container_format == GUID_ContainerFormatJpeg) {
         ComPtr<IPropertyBag2> props;
@@ -73,7 +76,25 @@ bool save_image(const CapturedImage& image, const std::wstring& path, const std:
     uint32_t height = image.height;
     uint32_t wic_stride = image.width * 4;
 
-    if (stride == wic_stride) {
+    if (need_convert) {
+        // Create WIC bitmap from BGRA data, then convert to encoder's format
+        ComPtr<IWICBitmap> src_bitmap;
+        hr = factory->CreateBitmapFromMemory(image.width, image.height,
+            GUID_WICPixelFormat32bppBGRA, stride,
+            static_cast<UINT>(stride * height),
+            const_cast<BYTE*>(image.bgra.data()), &src_bitmap);
+        if (FAILED(hr)) return false;
+
+        ComPtr<IWICFormatConverter> converter;
+        hr = factory->CreateFormatConverter(&converter);
+        if (FAILED(hr)) return false;
+
+        hr = converter->Initialize(src_bitmap.Get(), pix_fmt,
+            WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        if (FAILED(hr)) return false;
+
+        hr = frame->WriteSource(converter.Get(), nullptr);
+    } else if (stride == wic_stride) {
         hr = frame->WritePixels(height, stride,
             static_cast<UINT>(stride * height),
             const_cast<BYTE*>(image.bgra.data()));

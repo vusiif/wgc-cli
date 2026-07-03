@@ -217,6 +217,16 @@ static int run(const Options& opts) {
         captured = resize_image(captured, opts.max_width, target_h);
     }
 
+    // Infer format from --out extension if --format not explicitly set
+    std::wstring format = opts.format;
+    {
+        auto out_ext = std::filesystem::path(opts.out).extension().wstring();
+        for (auto& c : out_ext) c = towlower(c);
+        if (out_ext == L".jpg" || out_ext == L".jpeg") format = L"jpg";
+        else if (out_ext == L".bmp") format = L"bmp";
+        else if (out_ext == L".png") format = L"png";
+    }
+
     // Generate output path
     std::wstring out_path;
     // Check if user specified a file path (has known extension)
@@ -232,11 +242,11 @@ static int run(const Options& opts) {
         }
     } else {
         std::filesystem::create_directories(opts.out);
-        out_path = generate_output_path(opts.out, target.title, opts.format);
+        out_path = generate_output_path(opts.out, target.title, format);
     }
 
     // Save
-    if (!save_image(captured, out_path, opts.format)) {
+    if (!save_image(captured, out_path, format)) {
         output_error(opts, ExitCode::SaveFailed, L"SAVE_FAILED",
             L"Failed to save image to " + out_path);
         return static_cast<int>(ExitCode::SaveFailed);

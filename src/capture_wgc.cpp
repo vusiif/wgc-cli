@@ -215,7 +215,7 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
             } else if (!error_stage.empty()) {
                 result.stage = error_stage;
                 result.message = L"D3D operation failed: " + error_stage;
-                result.hresult = L"0x" + std::to_wstring(error_hr);
+                result.hresult = hresult_to_hex(error_hr);
                 result.suggestion = L"The window may be minimized or the GPU may be busy. Try --restore or --timeout-ms.";
             } else {
                 result.message = L"Failed to get capture frame";

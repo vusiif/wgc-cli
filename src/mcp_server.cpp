@@ -74,6 +74,18 @@ static std::wstring json_get_string(const std::wstring& json, const std::wstring
     return result;
 }
 
+// Strict u32 parse: non-empty, fully consumed, no negative, no overflow
+static bool parse_u32_strict(const std::wstring& s, uint32_t& out) {
+    if (s.empty()) return false;
+    if (s[0] == L'-') return false;
+    wchar_t* end = nullptr;
+    unsigned long val = std::wcstoul(s.c_str(), &end, 10);
+    if (end != s.c_str() + s.size()) return false;
+    if (val > UINT32_MAX) return false;
+    out = static_cast<uint32_t>(val);
+    return true;
+}
+
 static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
     std::wstring needle = L"\"" + key + L"\":";
     auto pos = json.find(needle);
@@ -180,7 +192,7 @@ static std::wstring handle_initialize(int64_t id) {
     return make_response(id,
         L"{\"protocolVersion\":\"2024-11-05\""
         L",\"capabilities\":{\"tools\":{}}"
-        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.1\"}}");
+        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.2\"}}");
 }
 
 static std::wstring handle_tools_list(int64_t id) {
@@ -212,9 +224,9 @@ static std::wstring handle_tools_list(int64_t id) {
 }
 
 static std::wstring do_list_windows(const std::wstring& params) {
-    bool include_min = true;
-    auto inc = json_get_string(params, L"include_minimized");
-    if (inc == L"false") include_min = false;
+    // Default true; only false if explicitly set to false
+    bool has_min_key = params.find(L"\"include_minimized\"") != std::wstring::npos;
+    bool include_min = !has_min_key || json_get_bool(params, L"include_minimized");
 
     auto windows = enumerate_windows(include_min);
     // Build JSON array of windows, then embed as escaped text
@@ -273,9 +285,11 @@ static std::wstring do_capture_window(const std::wstring& params) {
     if (!resize_str.empty()) {
         auto xpos = resize_str.find(L'x');
         if (xpos == std::wstring::npos) xpos = resize_str.find(L'X');
-        if (xpos != std::wstring::npos && xpos > 0 && xpos < resize_str.size() - 1) {
-            resize_w = static_cast<uint32_t>(std::wcstoul(resize_str.c_str(), nullptr, 10));
-            resize_h = static_cast<uint32_t>(std::wcstoul(resize_str.c_str() + xpos + 1, nullptr, 10));
+        if (xpos == std::wstring::npos || xpos == 0 || xpos == resize_str.size() - 1 ||
+            !parse_u32_strict(resize_str.substr(0, xpos), resize_w) ||
+            !parse_u32_strict(resize_str.substr(xpos + 1), resize_h) ||
+            resize_w == 0 || resize_h == 0) {
+            return L"{\"content\":[{\"type\":\"text\",\"text\":\"Invalid resize format, use WxH (e.g. 1024x768)\"}],\"isError\":true}";
         }
     }
 
@@ -287,23 +301,41 @@ static std::wstring do_capture_window(const std::wstring& params) {
         wchar_t* end = nullptr;
         uint32_t parts[4] = {};
         for (int j = 0; j < 4; ++j) {
-            if (*p == L'\0') break;
-            parts[j] = static_cast<uint32_t>(std::wcstoul(p, &end, 10));
+            if (*p == L'\0') {
+                return L"{\"content\":[{\"type\":\"text\",\"text\":\"Crop requires 4 values (x,y,w,h)\"}],\"isError\":true}";
+            }
+            unsigned long val = std::wcstoul(p, &end, 10);
+            if (end == p) {
+                return L"{\"content\":[{\"type\":\"text\",\"text\":\"Invalid crop value\"}],\"isError\":true}";
+            }
+            parts[j] = static_cast<uint32_t>(val);
             p = end;
-            if (j < 3 && *p == L',') p++;
+            if (j < 3) {
+                if (*p != L',') {
+                    return L"{\"content\":[{\"type\":\"text\",\"text\":\"Crop format is x,y,w,h\"}],\"isError\":true}";
+                }
+                p++;
+            }
+        }
+        if (*p != L'\0') {
+            return L"{\"content\":[{\"type\":\"text\",\"text\":\"Trailing characters in crop\"}],\"isError\":true}";
         }
         crop_x = parts[0]; crop_y = parts[1];
         crop_w = parts[2]; crop_h = parts[3];
         has_crop = (crop_w > 0 && crop_h > 0);
     }
 
-    // Parse hwnd
+    // Parse hwnd (strict: must fully consume)
     uint64_t hwnd_val = 0;
     if (!hwnd_str.empty()) {
-        if (hwnd_str.size() > 2 && hwnd_str[0] == L'0' && (hwnd_str[1] == L'x' || hwnd_str[1] == L'X'))
-            hwnd_val = std::wcstoull(hwnd_str.c_str(), nullptr, 16);
-        else
-            hwnd_val = std::wcstoull(hwnd_str.c_str(), nullptr, 10);
+        wchar_t* h_end = nullptr;
+        if (hwnd_str.size() > 2 && hwnd_str[0] == L'0' && (hwnd_str[1] == L'x' || hwnd_str[1] == L'X')) {
+            hwnd_val = std::wcstoull(hwnd_str.c_str(), &h_end, 16);
+            if (h_end != hwnd_str.c_str() + hwnd_str.size()) hwnd_val = 0;
+        } else {
+            hwnd_val = std::wcstoull(hwnd_str.c_str(), &h_end, 10);
+            if (h_end != hwnd_str.c_str() + hwnd_str.size()) hwnd_val = 0;
+        }
     }
 
     // Find target window
@@ -384,6 +416,16 @@ static std::wstring do_capture_window(const std::wstring& params) {
     } else if (mw > 0 && captured.width > mw) {
         uint32_t th = captured.height * mw / captured.width;
         captured = resize_image(captured, mw, th);
+    }
+
+    // Infer format from extension if not explicitly set
+    {
+        auto inf_ext = std::filesystem::path(out).extension().wstring();
+        for (auto& c : inf_ext) c = towlower(c);
+        if (inf_ext == L".jpg" || inf_ext == L".jpeg") format = L"jpg";
+        else if (inf_ext == L".bmp") format = L"bmp";
+        else if (inf_ext == L".png") format = L"png";
+        // else keep the user-specified format
     }
 
     // Generate output path
