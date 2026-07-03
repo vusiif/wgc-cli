@@ -1,9 +1,7 @@
 #include "cli_args.h"
 #include "output.h"
 #include "window_enum.h"
-#include "capture_wgc.h"
-#include "image_wic.h"
-#include "d3d_helpers.h"
+#include "capture_common.h"
 #include "server.h"
 #include "client.h"
 #include "diagnose.h"
@@ -162,7 +160,6 @@ static int run(const Options& opts) {
         if (!opts.json) std::wcout << L"Restoring minimized window...\n";
         ShowWindow(target.hwnd, SW_RESTORE);
         Sleep(500);
-        // Wait until window is no longer iconic
         for (int i = 0; i < 10 && IsIconic(target.hwnd); ++i) {
             Sleep(100);
         }
@@ -173,84 +170,32 @@ static int run(const Options& opts) {
         Sleep(opts.delay_ms);
     }
 
-    // Initialize D3D11
-    auto d3d = create_d3d_device();
-    if (!d3d.device) {
-        output_error(opts, ExitCode::WgcUnavailable, L"D3D11_INIT_FAILED",
-            L"Failed to create D3D11 device");
-        return static_cast<int>(ExitCode::WgcUnavailable);
-    }
+    // Capture via shared pipeline
+    CaptureRequest req;
+    req.hwnd = target.hwnd;
+    req.title = target.title;
+    req.out = opts.out;
+    req.format = opts.format;
+    req.timeout_ms = opts.timeout_ms;
+    req.restore_minimized = false;  // already handled above
+    req.has_crop = opts.has_crop;
+    req.crop_x = opts.crop_x; req.crop_y = opts.crop_y;
+    req.crop_w = opts.crop_w; req.crop_h = opts.crop_h;
+    req.resize_w = opts.resize_w; req.resize_h = opts.resize_h;
+    req.max_width = opts.max_width;
 
-    // Capture
-    auto capture_result = capture_window(d3d.device.Get(), target.hwnd, opts.timeout_ms);
-    if (!capture_result.ok) {
-        ExitCode ec = capture_result.error_code == L"TIMEOUT"
-            ? ExitCode::Timeout : ExitCode::CaptureFailed;
-        output_error_ex(opts, ec, capture_result.error_code,
-            capture_result.message, capture_result.stage,
-            capture_result.hresult, capture_result.suggestion);
+    auto cr = capture_to_file(req);
+    if (!cr.ok) {
+        ExitCode ec = (cr.error_code == L"TIMEOUT") ? ExitCode::Timeout
+            : (cr.error_code == L"SAVE_FAILED") ? ExitCode::SaveFailed
+            : (cr.error_code == L"D3D11_INIT_FAILED") ? ExitCode::WgcUnavailable
+            : ExitCode::CaptureFailed;
+        output_error_ex(opts, ec, cr.error_code, cr.message, cr.stage, cr.hresult, cr.suggestion);
         return static_cast<int>(ec);
     }
-    CapturedImage captured = std::move(*capture_result.image);
-
-    // Crop
-    if (opts.has_crop) {
-        if (opts.crop_w == 0 || opts.crop_h == 0) {
-            output_error(opts, ExitCode::BadArgs, L"CROP_INVALID_SIZE",
-                L"Crop width and height must be > 0");
-            return static_cast<int>(ExitCode::BadArgs);
-        }
-        if (opts.crop_x >= captured.width || opts.crop_y >= captured.height) {
-            output_error(opts, ExitCode::BadArgs, L"CROP_OUT_OF_BOUNDS",
-                L"Crop origin (" + std::to_wstring(opts.crop_x) + L"," + std::to_wstring(opts.crop_y) +
-                L") is outside image (" + std::to_wstring(captured.width) + L"x" + std::to_wstring(captured.height) + L")");
-            return static_cast<int>(ExitCode::BadArgs);
-        }
-        captured = crop_image(captured, opts.crop_x, opts.crop_y, opts.crop_w, opts.crop_h);
-    }
-
-    // Resize
-    if (opts.resize_w > 0 && opts.resize_h > 0) {
-        captured = resize_image(captured, opts.resize_w, opts.resize_h);
-    } else if (opts.max_width > 0 && captured.width > opts.max_width) {
-        uint32_t target_h = captured.height * opts.max_width / captured.width;
-        captured = resize_image(captured, opts.max_width, target_h);
-    }
-
-    // Infer format from --out extension if --format not explicitly set
-    std::wstring format = opts.format;
-    {
-        auto out_ext = std::filesystem::path(opts.out).extension().wstring();
-        for (auto& c : out_ext) c = towlower(c);
-        if (out_ext == L".jpg" || out_ext == L".jpeg") format = L"jpg";
-        else if (out_ext == L".bmp") format = L"bmp";
-        else if (out_ext == L".png") format = L"png";
-    }
-
-    // Generate output path
-    std::wstring out_path;
-    // Check if user specified a file path (has known extension)
-    auto ext = std::filesystem::path(opts.out).extension().wstring();
-    for (auto& c : ext) c = towlower(c);
-    bool is_file_path = (ext == L".png" || ext == L".jpg" || ext == L".jpeg"
-                      || ext == L".bmp");
-    if (is_file_path) {
-        out_path = opts.out;
-        auto parent = std::filesystem::path(out_path).parent_path();
-        if (!parent.empty()) {
-            std::filesystem::create_directories(parent);
-        }
-    } else {
-        std::filesystem::create_directories(opts.out);
-        out_path = generate_output_path(opts.out, target.title, format);
-    }
-
-    // Save
-    if (!save_image(captured, out_path, format)) {
-        output_error(opts, ExitCode::SaveFailed, L"SAVE_FAILED",
-            L"Failed to save image to " + out_path);
-        return static_cast<int>(ExitCode::SaveFailed);
-    }
+    std::wstring out_path = cr.out_path;
+    uint32_t out_width = cr.image_width;
+    uint32_t out_height = cr.image_height;
 
     // Output success
     MatchedWindow mw;
@@ -258,8 +203,8 @@ static int run(const Options& opts) {
     mw.className = target.className;
     mw.hwnd = reinterpret_cast<uint64_t>(target.hwnd);
     mw.pid = target.pid;
-    mw.width = captured.width;
-    mw.height = captured.height;
+    mw.width = out_width;
+    mw.height = out_height;
     mw.minimized = target.minimized;
 
     // Build candidates list

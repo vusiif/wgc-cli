@@ -1,8 +1,6 @@
 #include "mcp_server.h"
 #include "window_enum.h"
-#include "capture_wgc.h"
-#include "d3d_helpers.h"
-#include "image_wic.h"
+#include "capture_common.h"
 
 #include <windows.h>
 #include <iostream>
@@ -192,7 +190,7 @@ static std::wstring handle_initialize(int64_t id) {
     return make_response(id,
         L"{\"protocolVersion\":\"2024-11-05\""
         L",\"capabilities\":{\"tools\":{}}"
-        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.3\"}}");
+        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.4\"}}");
 }
 
 static std::wstring handle_tools_list(int64_t id) {
@@ -379,82 +377,36 @@ static std::wstring do_capture_window(const std::wstring& params) {
         return oss.str();
     }
 
-    // Restore if minimized
-    if (target.minimized) {
-        ShowWindow(target.hwnd, SW_RESTORE);
-        Sleep(500);
-        for (int i = 0; i < 10 && IsIconic(target.hwnd); ++i) Sleep(100);
-    }
+    // Capture via shared pipeline
+    CaptureRequest req;
+    req.hwnd = target.hwnd;
+    req.title = target.title;
+    req.out = out;
+    req.format = format;
+    req.timeout_ms = timeout_ms;
+    req.has_crop = has_crop;
+    req.crop_x = crop_x; req.crop_y = crop_y;
+    req.crop_w = crop_w; req.crop_h = crop_h;
+    req.resize_w = resize_w; req.resize_h = resize_h;
+    req.max_width = mw;
 
-    auto d3d = create_d3d_device();
-    if (!d3d.device) {
-        return L"{\"content\":[{\"type\":\"text\",\"text\":\"D3D11 device creation failed\"}],\"isError\":true}";
-    }
-
-    auto capture_result = capture_window(d3d.device.Get(), target.hwnd, timeout_ms);
-    if (!capture_result.ok) {
+    auto cr = capture_to_file(req);
+    if (!cr.ok) {
         std::wostringstream oss;
         oss << L"{\"content\":[{\"type\":\"text\",\"text\":\""
-            << escape_json(capture_result.error_code + L": " + capture_result.message)
+            << escape_json(cr.error_code + L": " + cr.message)
             << L"\"}],\"isError\":true}";
         return oss.str();
-    }
-
-    CapturedImage captured = std::move(*capture_result.image);
-
-    // Crop
-    if (has_crop) {
-        if (crop_x >= captured.width || crop_y >= captured.height) {
-            return L"{\"content\":[{\"type\":\"text\",\"text\":\"Crop origin outside image\"}],\"isError\":true}";
-        }
-        captured = crop_image(captured, crop_x, crop_y, crop_w, crop_h);
-    }
-
-    // Resize
-    if (resize_w > 0 && resize_h > 0) {
-        captured = resize_image(captured, resize_w, resize_h);
-    } else if (mw > 0 && captured.width > mw) {
-        uint32_t th = captured.height * mw / captured.width;
-        captured = resize_image(captured, mw, th);
-    }
-
-    // Infer format from extension if not explicitly set
-    {
-        auto inf_ext = std::filesystem::path(out).extension().wstring();
-        for (auto& c : inf_ext) c = towlower(c);
-        if (inf_ext == L".jpg" || inf_ext == L".jpeg") format = L"jpg";
-        else if (inf_ext == L".bmp") format = L"bmp";
-        else if (inf_ext == L".png") format = L"png";
-        // else keep the user-specified format
-    }
-
-    // Generate output path
-    std::wstring out_path;
-    auto out_ext = std::filesystem::path(out).extension().wstring();
-    for (auto& c : out_ext) c = towlower(c);
-    bool is_file = (out_ext == L".png" || out_ext == L".jpg" || out_ext == L".jpeg"
-                 || out_ext == L".bmp");
-    if (is_file) {
-        out_path = out;
-        auto parent = std::filesystem::path(out_path).parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent);
-    } else {
-        std::filesystem::create_directories(out);
-        out_path = generate_output_path(out, target.title, format);
-    }
-
-    if (!save_image(captured, out_path, format)) {
-        return L"{\"content\":[{\"type\":\"text\",\"text\":\"Failed to save image\"}],\"isError\":true}";
     }
 
     // Build success response
     int ww = target.rect.right - target.rect.left;
     int wh = target.rect.bottom - target.rect.top;
     std::wostringstream text;
-    text << L"Screenshot saved: " << out_path
+    text << L"Screenshot saved: " << cr.out_path
          << L"\nWindow: " << target.title
          << L" (" << ww << L"x" << wh << L")"
-         << L"\nOutput: " << captured.width << L"x" << captured.height;
+         << L"\nOutput: " << cr.image_width << L"x" << cr.image_height;
 
     std::wostringstream oss;
     oss << L"{\"content\":[{\"type\":\"text\",\"text\":\""

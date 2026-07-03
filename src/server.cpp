@@ -1,8 +1,6 @@
 #include "server.h"
 #include "window_enum.h"
-#include "capture_wgc.h"
-#include "d3d_helpers.h"
-#include "image_wic.h"
+#include "capture_common.h"
 
 #include <windows.h>
 #include <aclapi.h>
@@ -157,54 +155,26 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
         return L"{\"ok\":false,\"errorCode\":\"WINDOW_NOT_FOUND\",\"message\":\"No window matched\"}";
     }
 
-    // Restore if minimized
-    if (target.minimized) {
-        ShowWindow(target.hwnd, SW_RESTORE);
-        Sleep(500);
-        for (int i = 0; i < 10 && IsIconic(target.hwnd); ++i) Sleep(100);
-    }
+    // Capture via shared pipeline
+    CaptureRequest req;
+    req.hwnd = target.hwnd;
+    req.title = target.title;
+    req.out = out;
+    req.timeout_ms = 3000;
 
-    auto d3d = create_d3d_device();
-    if (!d3d.device) {
-        return L"{\"ok\":false,\"errorCode\":\"D3D11_INIT_FAILED\",\"message\":\"D3D11 device creation failed\"}";
-    }
-
-    auto capture_result = capture_window(d3d.device.Get(), target.hwnd, 3000);
-    if (!capture_result.ok) {
+    auto cr = capture_to_file(req);
+    if (!cr.ok) {
         std::wostringstream oss;
-        oss << L"{\"ok\":false,\"errorCode\":\"" << escape_json(capture_result.error_code)
-            << L"\",\"message\":\"" << escape_json(capture_result.message) << L"\"";
-        if (!capture_result.stage.empty())
-            oss << L",\"stage\":\"" << escape_json(capture_result.stage) << L"\"";
-        if (!capture_result.hresult.empty())
-            oss << L",\"hresult\":\"" << escape_json(capture_result.hresult) << L"\"";
-        if (!capture_result.suggestion.empty())
-            oss << L",\"suggestion\":\"" << escape_json(capture_result.suggestion) << L"\"";
+        oss << L"{\"ok\":false,\"errorCode\":\"" << escape_json(cr.error_code)
+            << L"\",\"message\":\"" << escape_json(cr.message) << L"\"";
+        if (!cr.stage.empty())
+            oss << L",\"stage\":\"" << escape_json(cr.stage) << L"\"";
+        if (!cr.hresult.empty())
+            oss << L",\"hresult\":\"" << escape_json(cr.hresult) << L"\"";
+        if (!cr.suggestion.empty())
+            oss << L",\"suggestion\":\"" << escape_json(cr.suggestion) << L"\"";
         oss << L"}";
         return oss.str();
-    }
-
-    // Generate output path
-    std::wstring out_path;
-    auto out_ext = std::filesystem::path(out).extension().wstring();
-    for (auto& c : out_ext) c = towlower(c);
-    bool is_file = (out_ext == L".png" || out_ext == L".jpg" || out_ext == L".jpeg"
-                 || out_ext == L".bmp");
-    // Infer format from extension
-    std::wstring fmt = L"png";
-    if (out_ext == L".jpg" || out_ext == L".jpeg") fmt = L"jpg";
-    else if (out_ext == L".bmp") fmt = L"bmp";
-    if (is_file) {
-        out_path = out;
-        auto parent = std::filesystem::path(out_path).parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent);
-    } else {
-        std::filesystem::create_directories(out);
-        out_path = generate_output_path(out, target.title, fmt);
-    }
-
-    if (!save_image(*capture_result.image, out_path, fmt)) {
-        return L"{\"ok\":false,\"errorCode\":\"SAVE_FAILED\",\"message\":\"PNG save failed\",\"suggestion\":\"Check output directory exists and is writable.\"}";
     }
 
     int ww = target.rect.right - target.rect.left;
@@ -216,7 +186,7 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
         << L"\",\"pid\":" << target.pid
         << L",\"width\":" << ww << L",\"height\":" << wh
         << L",\"minimized\":" << (target.minimized ? L"true" : L"false")
-        << L"},\"screenshotPath\":\"" << escape_json(out_path) << L"\"}";
+        << L"},\"screenshotPath\":\"" << escape_json(cr.out_path) << L"\"}";
     return oss.str();
 }
 
@@ -281,7 +251,7 @@ static std::wstring process_request(const std::wstring& request) {
                 interactive = (flags.dwFlags & WSF_VISIBLE) != 0;
         }
         std::wostringstream oss;
-        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.3\""
+        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.4\""
             << L",\"userInteractive\":" << (interactive ? L"true" : L"false")
             << L"}}";
         return oss.str();
