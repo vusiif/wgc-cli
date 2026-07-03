@@ -13,6 +13,7 @@ Windows 命令行截图工具，基于 **Windows.Graphics.Capture** API。专为
 - 图片缩放、裁剪、格式转换
 - 最小化窗口自动恢复后截图
 - **Server/Client 模式** — 命名管道 IPC，支持跨会话的 AI Agent 调用
+- **MCP stdio 服务器** — JSON-RPC 2.0，兼容 Claude Code / Cursor / Codex
 - **环境诊断**（`--doctor`）
 - 无 GUI、无剪贴板、无磁盘扫描
 

@@ -22,10 +22,16 @@ static bool parse_u32_strict(const std::wstring& s, uint32_t& out) {
 
 static uint64_t parse_hwnd_str(const std::wstring& s) {
     if (s.empty()) return 0;
+    wchar_t* end = nullptr;
+    uint64_t val = 0;
     if (s.size() > 2 && s[0] == L'0' && (s[1] == L'x' || s[1] == L'X')) {
-        return std::wcstoull(s.c_str(), nullptr, 16);
+        val = std::wcstoull(s.c_str(), &end, 16);
+        if (end != s.c_str() + s.size()) return 0;
+    } else {
+        val = std::wcstoull(s.c_str(), &end, 10);
+        if (end != s.c_str() + s.size()) return 0;
     }
-    return std::wcstoull(s.c_str(), nullptr, 10);
+    return val;
 }
 
 bool parse_args(int argc, wchar_t* argv[], Options& opts) {
@@ -109,7 +115,8 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 return false;
             }
             if (!parse_u32_strict(s.substr(0, xpos), opts.resize_w) ||
-                !parse_u32_strict(s.substr(xpos + 1), opts.resize_h)) {
+                !parse_u32_strict(s.substr(xpos + 1), opts.resize_h) ||
+                opts.resize_w == 0 || opts.resize_h == 0) {
                 std::wcerr << L"Error: --resize requires positive integers in WxH format, got: " << s << L"\n";
                 return false;
             }
@@ -118,14 +125,14 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                 std::wcerr << L"Error: --format requires png, jpg, jpeg, or bmp\n";
                 return false;
             }
-            opts.format = argv[i];
             {
-                std::wstring fmt_lower = to_lower(opts.format);
+                std::wstring fmt_lower = to_lower(argv[i]);
                 if (fmt_lower != L"png" && fmt_lower != L"jpg" &&
                     fmt_lower != L"jpeg" && fmt_lower != L"bmp") {
                     std::wcerr << L"Error: --format must be png, jpg, jpeg, or bmp, got: " << argv[i] << L"\n";
                     return false;
                 }
+                opts.format = fmt_lower;
             }
         } else if (arg == L"--crop") {
             if (++i >= argc) {
@@ -290,5 +297,5 @@ void print_help() {
 }
 
 void print_version() {
-    std::wcout << L"wgccli 1.7.0\n";
+    std::wcout << L"wgccli 1.7.1\n";
 }

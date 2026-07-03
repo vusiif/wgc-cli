@@ -220,11 +220,10 @@ static int run(const Options& opts) {
     // Generate output path
     std::wstring out_path;
     // Check if user specified a file path (has known extension)
-    std::wstring ext_check = opts.out.size() >= 4
-        ? opts.out.substr(opts.out.size() - 4) : L"";
-    bool is_file_path = (ext_check == L".png" || ext_check == L".PNG"
-                      || ext_check == L".jpg" || ext_check == L".JPG"
-                      || ext_check == L".bmp" || ext_check == L".BMP");
+    auto ext = std::filesystem::path(opts.out).extension().wstring();
+    for (auto& c : ext) c = towlower(c);
+    bool is_file_path = (ext == L".png" || ext == L".jpg" || ext == L".jpeg"
+                      || ext == L".bmp");
     if (is_file_path) {
         out_path = opts.out;
         auto parent = std::filesystem::path(out_path).parent_path();

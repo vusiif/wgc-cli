@@ -113,6 +113,8 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
 
         winrt::handle frame_event{ CreateEvent(nullptr, TRUE, FALSE, nullptr) };
         std::optional<CapturedImage> result_image;
+        std::wstring error_stage;
+        HRESULT error_hr = S_OK;
 
         frame_pool.FrameArrived([&](wgc::Direct3D11CaptureFramePool const& pool,
                                      winrt::Windows::Foundation::IInspectable const&) {
@@ -127,7 +129,12 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
                 auto surface = frame.Surface();
 
                 auto texture = get_texture_from_surface(surface);
-                if (!texture) return;
+                if (!texture) {
+                    error_stage = L"GetTextureFromSurface";
+                    error_hr = E_FAIL;
+                    SetEvent(frame_event.get());
+                    return;
+                }
 
                 D3D11_TEXTURE2D_DESC desc{};
                 texture->GetDesc(&desc);
@@ -147,7 +154,12 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
                 ComPtr<ID3D11Device> tex_device;
                 texture->GetDevice(&tex_device);
                 hr = tex_device->CreateTexture2D(&staging_desc, nullptr, &staging);
-                if (FAILED(hr)) return;
+                if (FAILED(hr)) {
+                    error_stage = L"CreateTexture2D";
+                    error_hr = hr;
+                    SetEvent(frame_event.get());
+                    return;
+                }
 
                 ComPtr<ID3D11DeviceContext> ctx;
                 tex_device->GetImmediateContext(&ctx);
@@ -155,7 +167,12 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
 
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 hr = ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-                if (FAILED(hr)) return;
+                if (FAILED(hr)) {
+                    error_stage = L"Map";
+                    error_hr = hr;
+                    SetEvent(frame_event.get());
+                    return;
+                }
 
                 CapturedImage img{};
                 img.width = static_cast<uint32_t>(frame_size.Width);
@@ -177,6 +194,7 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
                 result_image = std::move(img);
                 SetEvent(frame_event.get());
             } catch (...) {
+                error_stage = L"FrameArrived";
                 SetEvent(frame_event.get());
             }
         });
@@ -194,6 +212,11 @@ CaptureResult capture_window(ID3D11Device* device, HWND hwnd, uint32_t timeout_m
                 result.error_code = L"TIMEOUT";
                 result.message = L"Timed out waiting for capture frame";
                 result.suggestion = L"Increase --timeout-ms. Ensure the window is visible and responsive.";
+            } else if (!error_stage.empty()) {
+                result.stage = error_stage;
+                result.message = L"D3D operation failed: " + error_stage;
+                result.hresult = L"0x" + std::to_wstring(error_hr);
+                result.suggestion = L"The window may be minimized or the GPU may be busy. Try --restore or --timeout-ms.";
             } else {
                 result.message = L"Failed to get capture frame";
                 result.suggestion = L"The window may be minimized or the capture session failed. Try --restore.";

@@ -13,6 +13,7 @@ Windows command-line screenshot tool using **Windows.Graphics.Capture** API. Des
 - Image resize, crop, and format conversion
 - Minimized window auto-restore before capture
 - **Server/Client mode** — named pipe IPC for AI agents running in different sessions
+- **MCP stdio server** — JSON-RPC 2.0, compatible with Claude Code / Cursor / Codex
 - **Environment diagnostics** (`--doctor`)
 - No GUI, no clipboard, no disk scanning
 

@@ -74,6 +74,15 @@ static std::wstring json_get_string(const std::wstring& json, const std::wstring
     return result;
 }
 
+static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
+    std::wstring needle = L"\"" + key + L"\":";
+    auto pos = json.find(needle);
+    if (pos == std::wstring::npos) return false;
+    pos += needle.size();
+    while (pos < json.size() && json[pos] == L' ') pos++;
+    return json.size() - pos >= 4 && json.substr(pos, 4) == L"true";
+}
+
 static int64_t json_get_int(const std::wstring& json, const std::wstring& key) {
     std::wstring needle = L"\"" + key + L"\":";
     auto pos = json.find(needle);
@@ -171,7 +180,7 @@ static std::wstring handle_initialize(int64_t id) {
     return make_response(id,
         L"{\"protocolVersion\":\"2024-11-05\""
         L",\"capabilities\":{\"tools\":{}}"
-        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.0\"}}");
+        L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.1\"}}");
 }
 
 static std::wstring handle_tools_list(int64_t id) {
@@ -247,7 +256,7 @@ static std::wstring do_capture_window(const std::wstring& params) {
     int64_t pid_val = json_get_int(params, L"pid");
     int64_t max_width = json_get_int(params, L"max_width");
     int64_t timeout = json_get_int(params, L"timeout_ms");
-    bool exact = json_get_string(params, L"exact") == L"true";
+    bool exact = json_get_bool(params, L"exact");
 
     if (out.empty()) {
         return L"{\"content\":[{\"type\":\"text\",\"text\":\"Error: out parameter is required\"}],\"isError\":true}";
@@ -379,10 +388,10 @@ static std::wstring do_capture_window(const std::wstring& params) {
 
     // Generate output path
     std::wstring out_path;
-    std::wstring ext_check = out.size() >= 4 ? out.substr(out.size() - 4) : L"";
-    bool is_file = (ext_check == L".png" || ext_check == L".PNG"
-                 || ext_check == L".jpg" || ext_check == L".JPG"
-                 || ext_check == L".bmp" || ext_check == L".BMP");
+    auto out_ext = std::filesystem::path(out).extension().wstring();
+    for (auto& c : out_ext) c = towlower(c);
+    bool is_file = (out_ext == L".png" || out_ext == L".jpg" || out_ext == L".jpeg"
+                 || out_ext == L".bmp");
     if (is_file) {
         out_path = out;
         auto parent = std::filesystem::path(out_path).parent_path();

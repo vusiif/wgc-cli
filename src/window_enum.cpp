@@ -118,8 +118,13 @@ std::vector<WindowInfo> enumerate_windows(bool include_minimized) {
 
     EnumWindows(enum_proc, reinterpret_cast<LPARAM>(&ctx));
 
-    // For title matching: keep all visible windows with titles
-    // Noise filtering happens at display time, not here
+    if (!include_minimized) {
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                [](const WindowInfo& w) { return w.minimized; }),
+            result.end());
+    }
+
     return result;
 }
 

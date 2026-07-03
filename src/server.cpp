@@ -186,9 +186,11 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
 
     // Generate output path
     std::wstring out_path;
-    if (out.size() >= 4 && (out.substr(out.size() - 4) == L".png" || out.substr(out.size() - 4) == L".PNG"
-                          || out.substr(out.size() - 4) == L".jpg" || out.substr(out.size() - 4) == L".JPG"
-                          || out.substr(out.size() - 4) == L".bmp" || out.substr(out.size() - 4) == L".BMP")) {
+    auto out_ext = std::filesystem::path(out).extension().wstring();
+    for (auto& c : out_ext) c = towlower(c);
+    bool is_file = (out_ext == L".png" || out_ext == L".jpg" || out_ext == L".jpeg"
+                 || out_ext == L".bmp");
+    if (is_file) {
         out_path = out;
         auto parent = std::filesystem::path(out_path).parent_path();
         if (!parent.empty()) std::filesystem::create_directories(parent);
@@ -275,7 +277,7 @@ static std::wstring process_request(const std::wstring& request) {
                 interactive = (flags.dwFlags & WSF_VISIBLE) != 0;
         }
         std::wostringstream oss;
-        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.0\""
+        oss << L"{\"ok\":true,\"server\":{\"version\":\"1.7.1\""
             << L",\"userInteractive\":" << (interactive ? L"true" : L"false")
             << L"}}";
         return oss.str();
@@ -308,7 +310,8 @@ int run_server(const std::wstring& pipe_name) {
     ACL* acl = nullptr;
     bool has_dacl = build_pipe_security(sa, sd, sid_buf, &acl);
     if (!has_dacl) {
-        std::wcerr << L"[server] Warning: failed to build DACL, using default security\n";
+        std::wcerr << L"[server] Error: failed to build DACL. Refusing to start for security.\n";
+        return 1;
     }
 
     while (true) {
@@ -333,7 +336,7 @@ int run_server(const std::wstring& pipe_name) {
         }
 
         // Read request
-        wchar_t buf[4096]{};
+        wchar_t buf[32768]{};
         DWORD bytes_read = 0;
         if (!ReadFile(hPipe, buf, sizeof(buf) - sizeof(wchar_t), &bytes_read, nullptr) || bytes_read == 0) {
             DisconnectNamedPipe(hPipe);
