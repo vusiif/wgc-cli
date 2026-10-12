@@ -1,3 +1,4 @@
+#include "parse_utils.h"
 #include "mcp_server.h"
 #include "window_enum.h"
 #include "capture_common.h"
@@ -45,11 +46,8 @@ static std::wstring hwnd_hex(HWND hwnd) {
 
 // Minimal JSON key extraction (handles escaped values)
 static std::wstring json_get_string(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return L"";
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
     if (pos >= json.size() || json[pos] != L'"') return L"";
     pos++;
     std::wstring result;
@@ -72,43 +70,28 @@ static std::wstring json_get_string(const std::wstring& json, const std::wstring
     return result;
 }
 
-// Strict u32 parse: non-empty, fully consumed, no negative, no overflow
-static bool parse_u32_strict(const std::wstring& s, uint32_t& out) {
-    if (s.empty()) return false;
-    if (s[0] == L'-') return false;
-    wchar_t* end = nullptr;
-    unsigned long val = std::wcstoul(s.c_str(), &end, 10);
-    if (end != s.c_str() + s.size()) return false;
-    if (val > UINT32_MAX) return false;
-    out = static_cast<uint32_t>(val);
-    return true;
-}
-
 static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return false;
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
-    return json.size() - pos >= 4 && json.substr(pos, 4) == L"true";
+    return json_token(json, key) == L"true";
 }
 
 static int64_t json_get_int(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return -1;
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
     if (pos >= json.size()) return -1;
-    return std::wcstoll(json.c_str() + pos, nullptr, 10);
+    auto token = json_token(json, key);
+    bool negative = !token.empty() && token[0] == L'-';
+    uint64_t value = 0;
+    auto digits = std::wstring_view(token);
+    if (negative) digits.remove_prefix(1);
+    if (!parse_unsigned(digits, value) || value > INT64_MAX) return -1;
+    return negative ? -static_cast<int64_t>(value) : static_cast<int64_t>(value);
 }
 
 static std::wstring json_get_raw(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return L"";
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
     if (pos >= json.size()) return L"";
     // Track nesting depth and string state to find end of value
     int depth = 0;
@@ -141,8 +124,9 @@ static bool read_line(std::wstring& out) {
     // Convert to wstring
     int len = MultiByteToWideChar(CP_UTF8, 0, buf, -1, nullptr, 0);
     if (len <= 0) return false;
-    out.resize(len - 1);
+    out.resize(len);
     MultiByteToWideChar(CP_UTF8, 0, buf, -1, out.data(), len);
+    out.pop_back();
     // Trim trailing \n/\r
     while (!out.empty() && (out.back() == L'\n' || out.back() == L'\r'))
         out.pop_back();
@@ -223,7 +207,7 @@ static std::wstring handle_tools_list(int64_t id) {
 
 static std::wstring do_list_windows(const std::wstring& params) {
     // Default true; only false if explicitly set to false
-    bool has_min_key = params.find(L"\"include_minimized\"") != std::wstring::npos;
+    bool has_min_key = json_value_position(params, L"include_minimized") != std::wstring::npos;
     bool include_min = !has_min_key || json_get_bool(params, L"include_minimized");
 
     auto windows = enumerate_windows(include_min);
@@ -261,6 +245,7 @@ static std::wstring do_capture_window(const std::wstring& params) {
     auto process = json_get_string(params, L"process");
     auto className = json_get_string(params, L"class_name");
     auto format = json_get_string(params, L"format");
+    const bool format_explicit = json_value_position(params, L"format") != std::wstring::npos;
     auto resize_str = json_get_string(params, L"resize");
     auto crop_str = json_get_string(params, L"crop");
     int64_t pid_val = json_get_int(params, L"pid");
@@ -272,7 +257,17 @@ static std::wstring do_capture_window(const std::wstring& params) {
         return L"{\"content\":[{\"type\":\"text\",\"text\":\"Error: out parameter is required\"}],\"isError\":true}";
     }
 
-    if (format.empty()) format = L"png";
+    if (!format_explicit) format = L"png";
+    for (auto& c : format) c = towlower(c);
+    if (format != L"png" && format != L"jpg" && format != L"jpeg" && format != L"bmp")
+        return L"{\"content\":[{\"type\":\"text\",\"text\":\"Invalid format\"}],\"isError\":true}";
+
+    for (const auto& key : {L"pid", L"max_width", L"timeout_ms"}) {
+        if (json_value_position(params, key) == std::wstring::npos) continue;
+        uint32_t value = 0;
+        if (!parse_u32_strict(json_token(params, key), value))
+            return L"{\"content\":[{\"type\":\"text\",\"text\":\"Expected a uint32 integer\"}],\"isError\":true}";
+    }
 
     uint32_t pid = pid_val > 0 ? static_cast<uint32_t>(pid_val) : 0;
     uint32_t timeout_ms = timeout > 0 ? static_cast<uint32_t>(timeout) : 3000;
@@ -296,14 +291,16 @@ static std::wstring do_capture_window(const std::wstring& params) {
     bool has_crop = false;
     if (!crop_str.empty()) {
         const wchar_t* p = crop_str.c_str();
-        wchar_t* end = nullptr;
+        const wchar_t* end = nullptr;
         uint32_t parts[4] = {};
         for (int j = 0; j < 4; ++j) {
             if (*p == L'\0') {
                 return L"{\"content\":[{\"type\":\"text\",\"text\":\"Crop requires 4 values (x,y,w,h)\"}],\"isError\":true}";
             }
-            unsigned long val = std::wcstoul(p, &end, 10);
-            if (end == p) {
+            end = p;
+            while (*end && *end != L',') ++end;
+            uint32_t val = 0;
+            if (!parse_u32_strict(std::wstring(p, static_cast<size_t>(end - p)), val)) {
                 return L"{\"content\":[{\"type\":\"text\",\"text\":\"Invalid crop value\"}],\"isError\":true}";
             }
             parts[j] = static_cast<uint32_t>(val);
@@ -320,21 +317,16 @@ static std::wstring do_capture_window(const std::wstring& params) {
         }
         crop_x = parts[0]; crop_y = parts[1];
         crop_w = parts[2]; crop_h = parts[3];
-        has_crop = (crop_w > 0 && crop_h > 0);
+        if (crop_w == 0 || crop_h == 0)
+            return L"{\"content\":[{\"type\":\"text\",\"text\":\"Crop size must be positive\"}],\"isError\":true}";
+        has_crop = true;
     }
 
     // Parse hwnd (strict: must fully consume)
     uint64_t hwnd_val = 0;
-    if (!hwnd_str.empty()) {
-        wchar_t* h_end = nullptr;
-        if (hwnd_str.size() > 2 && hwnd_str[0] == L'0' && (hwnd_str[1] == L'x' || hwnd_str[1] == L'X')) {
-            hwnd_val = std::wcstoull(hwnd_str.c_str(), &h_end, 16);
-            if (h_end != hwnd_str.c_str() + hwnd_str.size()) hwnd_val = 0;
-        } else {
-            hwnd_val = std::wcstoull(hwnd_str.c_str(), &h_end, 10);
-            if (h_end != hwnd_str.c_str() + hwnd_str.size()) hwnd_val = 0;
-        }
-    }
+    if (json_value_position(params, L"hwnd") != std::wstring::npos &&
+        !parse_hwnd_strict(hwnd_str, hwnd_val))
+        return L"{\"content\":[{\"type\":\"text\",\"text\":\"Invalid HWND\"}],\"isError\":true}";
 
     // Find target window
     WindowInfo target{};
@@ -383,6 +375,7 @@ static std::wstring do_capture_window(const std::wstring& params) {
     req.title = target.title;
     req.out = out;
     req.format = format;
+    req.format_explicit = format_explicit;
     req.timeout_ms = timeout_ms;
     req.has_crop = has_crop;
     req.crop_x = crop_x; req.crop_y = crop_y;
@@ -451,13 +444,9 @@ int run_mcp_server() {
         } else if (method == L"tools/list") {
             response = handle_tools_list(id);
         } else if (method == L"tools/call") {
-            auto params_start = line.find(L"\"params\"");
+            auto params_start = json_value_position(line, L"params");
             if (params_start != std::wstring::npos) {
-                // Extract the params object
-                auto colon = line.find(L':', params_start);
-                if (colon != std::wstring::npos) {
-                    response = handle_tools_call(id, line.substr(colon + 1));
-                }
+                response = handle_tools_call(id, json_get_raw(line, L"params"));
             }
             if (response.empty()) {
                 response = make_error(id, -32602, L"Invalid params");

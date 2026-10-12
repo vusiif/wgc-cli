@@ -15,6 +15,15 @@ std::wstring format_from_extension(const std::wstring& path) {
     return L"";
 }
 
+OutputTarget resolve_output_target(const CaptureRequest& req) {
+    std::wstring format = req.format;
+    auto ext_fmt = format_from_extension(req.out);
+    const bool is_file = !std::filesystem::is_directory(req.out) &&
+        (!ext_fmt.empty() || std::filesystem::is_regular_file(req.out));
+    if (!req.format_explicit && is_file && !ext_fmt.empty()) format = ext_fmt;
+    return {is_file ? req.out : generate_output_path(req.out, req.title, format), format};
+}
+
 CaptureToFileResult capture_to_file(const CaptureRequest& req) {
     CaptureToFileResult result;
 
@@ -68,27 +77,13 @@ CaptureToFileResult capture_to_file(const CaptureRequest& req) {
         captured = resize_image(captured, req.max_width, target_h);
     }
 
-    // Infer format from extension if not explicitly different
-    std::wstring format = req.format;
-    auto ext_fmt = format_from_extension(req.out);
-    if (!ext_fmt.empty()) format = ext_fmt;
-
-    // Generate output path
-    std::wstring out_path;
-    auto out_ext = std::filesystem::path(req.out).extension().wstring();
-    for (auto& c : out_ext) c = towlower(c);
-    bool is_file = (!out_ext.empty());
-    if (is_file) {
-        out_path = req.out;
-        auto parent = std::filesystem::path(out_path).parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent);
-    } else {
-        std::filesystem::create_directories(req.out);
-        out_path = generate_output_path(req.out, req.title, format);
-    }
+    auto output = resolve_output_target(req);
+    const auto& out_path = output.path;
+    auto parent = std::filesystem::path(out_path).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent);
 
     // Save
-    if (!save_image(captured, out_path, format)) {
+    if (!save_image(captured, out_path, output.format)) {
         result.error_code = L"SAVE_FAILED";
         result.message = L"Failed to save image to " + out_path;
         return result;

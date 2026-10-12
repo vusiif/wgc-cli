@@ -9,6 +9,7 @@ struct CaptureRequest {
     std::wstring title;  // for output filename generation
     std::wstring out;
     std::wstring format = L"png";
+    bool format_explicit = false;
     uint32_t timeout_ms = 3000;
     bool restore_minimized = true;
     // Crop
@@ -38,3 +39,9 @@ CaptureToFileResult capture_to_file(const CaptureRequest& req);
 // Infer format from file extension (e.g. ".jpg" -> "jpg")
 // Returns empty string if extension not recognized
 std::wstring format_from_extension(const std::wstring& path);
+
+struct OutputTarget {
+    std::wstring path;
+    std::wstring format;
+};
+OutputTarget resolve_output_target(const CaptureRequest& req);

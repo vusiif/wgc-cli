@@ -1,3 +1,4 @@
+#include "parse_utils.h"
 #include "server.h"
 #include "window_enum.h"
 #include "capture_common.h"
@@ -192,11 +193,8 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
 
 // Minimal JSON value extraction (handles escaped quotes and backslashes)
 static std::wstring json_get_string(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return L"";
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
     if (pos >= json.size() || json[pos] != L'"') return L"";
     pos++; // skip opening quote
     // Find closing quote, handling escaped chars
@@ -221,21 +219,16 @@ static std::wstring json_get_string(const std::wstring& json, const std::wstring
 }
 
 static uint64_t json_get_uint64(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return 0;
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
-    return std::wcstoull(json.c_str() + pos, nullptr, 10);
+    uint64_t value = 0;
+    return parse_unsigned(std::wstring_view(json_token(json, key)), value) ? value : 0;
 }
 
 static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
-    std::wstring needle = L"\"" + key + L"\":";
-    auto pos = json.find(needle);
+    auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return false;
-    pos += needle.size();
-    while (pos < json.size() && json[pos] == L' ') pos++;
-    return json.substr(pos, 4) == L"true";
+    return json_token(json, key) == L"true";
 }
 
 static std::wstring process_request(const std::wstring& request) {
@@ -262,7 +255,10 @@ static std::wstring process_request(const std::wstring& request) {
         auto out = json_get_string(request, L"out");
         auto hwnd_val = json_get_uint64(request, L"hwnd");
         bool exact = json_get_bool(request, L"exact");
-        uint32_t pid = static_cast<uint32_t>(json_get_uint64(request, L"pid"));
+        uint32_t pid = 0;
+        if (json_value_position(request, L"pid") != std::wstring::npos &&
+            !parse_u32_strict(json_token(request, L"pid"), pid))
+            return L"{\"ok\":false,\"errorCode\":\"BAD_ARGS\",\"message\":\"Invalid PID\"}";
         auto process = json_get_string(request, L"process");
         auto className = json_get_string(request, L"className");
         if (out.empty()) out = L".";

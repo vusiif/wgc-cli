@@ -1,3 +1,4 @@
+#include "parse_utils.h"
 #include "cli_args.h"
 #include <iostream>
 #include <algorithm>
@@ -8,30 +9,9 @@ static std::wstring to_lower(std::wstring s) {
     return s;
 }
 
-// Strict u32 parse: non-empty, fully consumed, no negative, no overflow
-static bool parse_u32_strict(const std::wstring& s, uint32_t& out) {
-    if (s.empty()) return false;
-    if (s[0] == L'-') return false;
-    wchar_t* end = nullptr;
-    unsigned long val = std::wcstoul(s.c_str(), &end, 10);
-    if (end != s.c_str() + s.size()) return false;  // trailing chars
-    if (val > UINT32_MAX) return false;
-    out = static_cast<uint32_t>(val);
-    return true;
-}
-
 static uint64_t parse_hwnd_str(const std::wstring& s) {
-    if (s.empty()) return 0;
-    wchar_t* end = nullptr;
-    uint64_t val = 0;
-    if (s.size() > 2 && s[0] == L'0' && (s[1] == L'x' || s[1] == L'X')) {
-        val = std::wcstoull(s.c_str(), &end, 16);
-        if (end != s.c_str() + s.size()) return 0;
-    } else {
-        val = std::wcstoull(s.c_str(), &end, 10);
-        if (end != s.c_str() + s.size()) return 0;
-    }
-    return val;
+    uint64_t value = 0;
+    return parse_hwnd_strict(s, value) ? value : 0;
 }
 
 bool parse_args(int argc, wchar_t* argv[], Options& opts) {
@@ -133,6 +113,7 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
                     return false;
                 }
                 opts.format = fmt_lower;
+                opts.format_explicit = true;
             }
         } else if (arg == L"--crop") {
             if (++i >= argc) {
@@ -143,15 +124,17 @@ bool parse_args(int argc, wchar_t* argv[], Options& opts) {
             // Parse x,y,w,h with strict validation
             {
                 const wchar_t* p = s.c_str();
-                wchar_t* end = nullptr;
+                const wchar_t* end = nullptr;
                 uint32_t parts[4] = {};
                 for (int j = 0; j < 4; ++j) {
                     if (*p == L'\0') {
                         std::wcerr << L"Error: --crop requires 4 values (x,y,w,h), got: " << s << L"\n";
                         return false;
                     }
-                    unsigned long val = std::wcstoul(p, &end, 10);
-                    if (end == p || val > UINT32_MAX) {
+                    end = p;
+                    while (*end && *end != L',') ++end;
+                    uint32_t val = 0;
+                    if (!parse_u32_strict(std::wstring(p, static_cast<size_t>(end - p)), val)) {
                         std::wcerr << L"Error: --crop value " << (j+1) << " is invalid in: " << s << L"\n";
                         return false;
                     }

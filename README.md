@@ -219,6 +219,19 @@ cmake --build build
 
 Or open in CLion with MSVC toolchain configured.
 
+Build from an MSVC Developer PowerShell. CMake discovers a Windows SDK with C++/WinRT automatically; `-DWINSDK_INCLUDE_BASE=".../Include/<version>"` overrides discovery.
+
+Regression tests run without capturing desktop content:
+
+```powershell
+cmake -S . -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DWGC_BUILD_TESTS=ON
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+An explicit CLI `--format` or MCP `format` takes precedence over the output file extension; otherwise `.png/.jpg/.jpeg/.bmp` determines the format, falling back to PNG. Explicit formats preserve the requested filename, so use matching extensions. Existing directories and new paths without a recognized image extension (such as `screenshots.v2`) are treated as directories.
+
+
 ## Limitations
 
 - Minimized windows may not be capturable (auto-restore is attempted)

@@ -47,6 +47,7 @@ struct Options {
     uint32_t resize_w = 0;
     uint32_t resize_h = 0;
     std::wstring format = L"png";
+    bool format_explicit = false;
     uint32_t crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
     bool has_crop = false;
 };

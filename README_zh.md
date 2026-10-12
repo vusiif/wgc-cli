@@ -218,6 +218,18 @@ cmake --build build
 
 或在 CLion 中配置 MSVC 工具链后直接打开。
 
+命令行构建请先进入 MSVC Developer PowerShell。CMake 自动发现带有 C++/WinRT 的 Windows SDK；也可用 `-DWINSDK_INCLUDE_BASE=".../Include/<版本>"` 指定。
+
+运行不截取桌面的参数、输出路径和协议回归测试：
+
+```powershell
+cmake -S . -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DWGC_BUILD_TESTS=ON
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+输出格式优先级：显式 `--format` / MCP `format`，其次是输出文件的 `.png/.jpg/.jpeg/.bmp` 扩展名，最后默认 PNG。显式格式不会改写指定文件名，避免冲突时请使用一致的扩展名。已有目录始终按目录处理；不存在且没有上述图片扩展名的路径（如 `screenshots.v2`）也按目录处理。
+
 ## 限制
 
 - 最小化窗口可能无法截图（会尝试自动恢复）

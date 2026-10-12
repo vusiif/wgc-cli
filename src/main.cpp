@@ -176,6 +176,7 @@ static int run(const Options& opts) {
     req.title = target.title;
     req.out = opts.out;
     req.format = opts.format;
+    req.format_explicit = opts.format_explicit;
     req.timeout_ms = opts.timeout_ms;
     req.restore_minimized = false;  // already handled above
     req.has_crop = opts.has_crop;
