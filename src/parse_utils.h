@@ -87,6 +87,7 @@ inline bool json_decode_string(const std::wstring& json, size_t start,
     while (i < json.size()) {
         wchar_t c = json[i];
         if (c == L'"') { end = i + 1; return true; }
+        if (c < 0x20) return false;
         if (c != L'\\') { out += c; ++i; continue; }
         if (i + 1 >= json.size()) return false;
         wchar_t esc = json[i + 1];

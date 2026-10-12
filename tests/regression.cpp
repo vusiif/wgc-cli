@@ -25,11 +25,18 @@ int main(int argc, char* argv[]) {
             && json_get_string(L"{\"t\":\"\\uZZZZ\"}", L"t").empty()
             && json_get_string(L"{\"t\":\"\\q\"}", L"t").empty()
             && json_get_string(L"{\"t\":\"\\uD800\"}", L"t").empty()
+            && json_get_string(L"{\"t\":\"a\tb\"}", L"t").empty()
+            && json_get_string(L"{\"t\":\"a\nb\"}", L"t").empty()
+            && json_get_string(L"{\"t\":\"a\x01" L"b\"}", L"t").empty()
+            && json_get_string(L"{\"t\":\"a\x7F" L"b\"}", L"t") == L"a\x7F" L"b"
             && json_rpc_id(L"{\"id\":7,\"method\":\"ping\"}") == L"7"
             && json_rpc_id(L"{\"id\":\"str-1\",\"method\":\"ping\"}") == L"\"str-1\""
             && json_rpc_id(L"{\"id\":1e2,\"method\":\"ping\"}") == L"1e2"
             && json_rpc_id(L"{\"id\":-3.25E+2,\"m\":1}") == L"-3.25E+2"
             && json_rpc_id(L"{\"id\":0,\"m\":1}") == L"0"
+            && json_rpc_id(L"{\"id\":4294967296,\"m\":1}") == L"4294967296"
+            && json_rpc_id(L"{\"id\":18446744073709551615,\"m\":1}") == L"18446744073709551615"
+            && json_rpc_id(L"{\"id\":\"a\\t\\u0001b\",\"m\":1}") == L"\"a\\t\\u0001b\""
             && json_rpc_id(L"{\"id\":\"a\\\",\\\"b\\\":1\",\"m\":1}") == L"\"a\\\",\\\"b\\\":1\""
             && json_rpc_id(L"{\"id\":null,\"m\":1}") == L"null"
             && json_rpc_id(L"{\"method\":\"ping\"}") == L"-1"
@@ -37,7 +44,15 @@ int main(int argc, char* argv[]) {
             && json_rpc_id(L"{\"id\":[1],\"m\":1}") == L"-1"
             && json_rpc_id(L"{\"id\":\"unterminated}") == L"-1"
             && json_rpc_id(L"{\"id\":1e,\"m\":1}") == L"-1"
-            && json_rpc_id(L"{\"id\":1.2.3,\"m\":1}") == L"1.2";
+            && json_rpc_id(L"{\"id\":1e+,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":1.2.3,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":01,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":12abc,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":1e2x,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":\"a\"x,\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":7 ") == L"-1"
+            && json_rpc_id(L"{\"id\":\"a\tb\",\"m\":1}") == L"-1"
+            && json_rpc_id(L"{\"id\":\"a\" ,\"m\":1}") == L"\"a\"";
     } else if (test == "overflow") {
         wchar_t exe[] = L"wgccli", flag[] = L"--pid", value[] = L"4294967296";
         wchar_t* args[] = {exe, flag, value};

@@ -101,20 +101,19 @@ static std::wstring json_get_raw(const std::wstring& json, const std::wstring& k
 static std::wstring json_rpc_id(const std::wstring& json) {
     auto pos = json_value_position(json, L"id");
     if (pos == std::wstring::npos || pos >= json.size()) return L"-1";
+    auto delimited = [&json](size_t i) {
+        while (i < json.size() && json_space(json[i])) ++i;
+        return i < json.size() && (json[i] == L',' || json[i] == L'}' || json[i] == L']');
+    };
     wchar_t c = json[pos];
     if (c == L'"') {
         std::wstring decoded;
         size_t end = 0;
-        if (!json_decode_string(json, pos, decoded, end)) return L"-1";
+        if (!json_decode_string(json, pos, decoded, end) || !delimited(end)) return L"-1";
         return json.substr(pos, end - pos);
     }
-    if (json.compare(pos, 4, L"null") == 0) {
-        size_t after = pos + 4;
-        if (after >= json.size() || json_space(json[after]) ||
-            json[after] == L',' || json[after] == L'}' || json[after] == L']')
-            return L"null";
-        return L"-1";
-    }
+    if (json.compare(pos, 4, L"null") == 0)
+        return delimited(pos + 4) ? L"null" : L"-1";
     if (c != L'-' && (c < L'0' || c > L'9')) return L"-1";
     size_t i = pos;
     if (json[i] == L'-') ++i;
@@ -134,6 +133,7 @@ static std::wstring json_rpc_id(const std::wstring& json) {
         while (i < json.size() && json[i] >= L'0' && json[i] <= L'9') ++i;
         if (i == digits) return L"-1";
     }
+    if (!delimited(i)) return L"-1";
     return json.substr(pos, i - pos);
 }
 
