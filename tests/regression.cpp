@@ -52,7 +52,46 @@ int main(int argc, char* argv[]) {
             && json_rpc_id(L"{\"id\":\"a\"x,\"m\":1}") == L"-1"
             && json_rpc_id(L"{\"id\":7 ") == L"-1"
             && json_rpc_id(L"{\"id\":\"a\tb\",\"m\":1}") == L"-1"
-            && json_rpc_id(L"{\"id\":\"a\" ,\"m\":1}") == L"\"a\"";
+            && json_rpc_id(L"{\"id\":\"a\" ,\"m\":1}") == L"\"a\""
+            && json_validate(L"{\"a\":1}") == JsonStatus::Ok
+            && json_validate(L" \r\n [1,{\"b\":-1.5e+3},null,true,false,\"s\\u0041\"]\t") == JsonStatus::Ok
+            && json_validate(L"\"\\uD83D\\uDE00\"") == JsonStatus::Ok
+            && json_validate(L"") == JsonStatus::Syntax
+            && json_validate(L"{") == JsonStatus::Syntax
+            && json_validate(L"{\"a\":1,}") == JsonStatus::Syntax
+            && json_validate(L"[1,]") == JsonStatus::Syntax
+            && json_validate(L"01") == JsonStatus::Syntax
+            && json_validate(L"1.") == JsonStatus::Syntax
+            && json_validate(L".5") == JsonStatus::Syntax
+            && json_validate(L"-") == JsonStatus::Syntax
+            && json_validate(L"truex") == JsonStatus::Syntax
+            && json_validate(L"{\"a\":01}") == JsonStatus::Syntax
+            && json_validate(L"{\"a\":1} extra") == JsonStatus::Syntax
+            && json_validate(L"\"a\tb\"") == JsonStatus::Syntax
+            && json_validate(L"\"\\q\"") == JsonStatus::Syntax
+            && json_validate(L"\"\\uD800\"") == JsonStatus::Syntax
+            && json_validate(L"{\"a\":\"unterminated}") == JsonStatus::Syntax
+            && json_type_at(L"{\"a\":1}", 5) == JsonType::Number
+            && json_type_at(L"{\"a\":null}", 5) == JsonType::Null
+            && json_type_at(L"{\"a\":true}", 5) == JsonType::Bool
+            && json_type_at(L"{\"a\":{\"b\":1}}", 5) == JsonType::Object
+            && json_type_at(L"{\"a\":[1]}", 5) == JsonType::Array
+            && json_type_at(L"{\"a\":\"s\"}", 5) == JsonType::String
+            && json_type_at(L"{}", 2) == JsonType::Absent
+            && json_type_at(L"{}", 1) == JsonType::Invalid
+            && json_member_type(L"{\"params\":{\"id\":[1]},\"id\":7}", L"id") == JsonType::Number
+            && json_member_type(L"{\"params\":{\"id\":[1]}}", L"id") == JsonType::Absent
+            && json_member_type(L"{\"id\":\"a\\tb\"}", L"id") == JsonType::String;
+        if (ok) {
+            std::wstring deep;
+            for (int i = 0; i < 100; ++i) deep += L'[';
+            for (int i = 0; i < 100; ++i) deep += L']';
+            ok = json_validate(deep) == JsonStatus::Depth;
+            std::wstring bounded;
+            for (int i = 0; i < 63; ++i) bounded += L'[';
+            for (int i = 0; i < 63; ++i) bounded += L']';
+            ok = ok && json_validate(bounded) == JsonStatus::Ok;
+        }
     } else if (test == "overflow") {
         wchar_t exe[] = L"wgccli", flag[] = L"--pid", value[] = L"4294967296";
         wchar_t* args[] = {exe, flag, value};
@@ -100,6 +139,67 @@ int main(int argc, char* argv[]) {
             auto response = do_capture_window(args);
             ok = ok && json_get_bool(response, L"isError")
                 && response.find(L"No window matched") == std::wstring::npos;
+        }
+    } else if (test == "envelope") {
+        auto expect = [](const std::wstring& line, EnvelopeKind kind,
+                         const std::wstring& id, const std::wstring& method) {
+            auto env = parse_envelope(line);
+            if (env.kind != kind || env.id != id || env.method != method) return false;
+            if (kind == EnvelopeKind::ParseError)
+                return env.code == -32700 && !env.message.empty();
+            if (kind == EnvelopeKind::InvalidRequest)
+                return env.code == -32600 && !env.message.empty();
+            return true;
+        };
+        ok = expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}",
+                    EnvelopeKind::Request, L"1", L"ping")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"method\":\"tools/list\",\"params\":{}}",
+                      EnvelopeKind::Request, L"\"a\"", L"tools/list")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}",
+                      EnvelopeKind::Request, L"null", L"ping")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"totally/unknown\"}",
+                      EnvelopeKind::Notification, L"", L"totally/unknown")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+                      EnvelopeKind::Notification, L"", L"notifications/initialized")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"notifications/initialized\"}",
+                      EnvelopeKind::Notification, L"", L"notifications/initialized")
+            && expect(L"{\r\n \"jsonrpc\" : \"2.0\" , \"method\" : \"notifications/cancelled\" \n}",
+                      EnvelopeKind::Notification, L"", L"notifications/cancelled")
+            && expect(L"{", EnvelopeKind::ParseError, L"", L"")
+            && expect(L"not json", EnvelopeKind::ParseError, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"ping\"", EnvelopeKind::ParseError, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":\"a\tb\",\"method\":\"ping\"}",
+                      EnvelopeKind::ParseError, L"", L"")
+            && expect(L"[1,2,3]", EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"\"string\"", EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"id\":1,\"method\":\"ping\"}", EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":2.0,\"id\":1,\"method\":\"ping\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":1}", EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":9}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"ping\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":[1],\"method\":\"ping\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":{\"x\":1},\"method\":\"ping\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":\"x\"}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":[1]}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":null}",
+                      EnvelopeKind::InvalidRequest, L"", L"")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":[1]}",
+                      EnvelopeKind::InvalidRequest, L"", L"");
+        if (ok) {
+            std::wstring deep;
+            for (int i = 0; i < 200; ++i) deep += L'[';
+            for (int i = 0; i < 200; ++i) deep += L']';
+            ok = expect(L"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":" + deep + L"}",
+                        EnvelopeKind::ParseError, L"", L"");
         }
     }
     std::cout << test << (ok ? " PASS\n" : " FAIL\n");

@@ -4,6 +4,7 @@
 #include "capture_common.h"
 
 #include <windows.h>
+#include <cstdio>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -137,23 +138,97 @@ static std::wstring json_rpc_id(const std::wstring& json) {
     return json.substr(pos, i - pos);
 }
 
+// --- JSON-RPC envelope validation ---
+
+enum class EnvelopeKind { Request, Notification, ParseError, InvalidRequest };
+
+struct Envelope {
+    EnvelopeKind kind = EnvelopeKind::ParseError;
+    int code = -32700;
+    std::wstring message;
+    std::wstring id;     // raw JSON token to echo back for requests
+    std::wstring method;
+};
+
+// Validate framing before any dispatch so invalid payloads can never execute
+// a tool, and so notifications (missing id) never produce output.
+static Envelope parse_envelope(const std::wstring& line) {
+    Envelope env;
+    auto status = json_validate(line);
+    if (status != JsonStatus::Ok) {
+        env.kind = EnvelopeKind::ParseError;
+        env.code = -32700;
+        env.message = status == JsonStatus::Depth
+            ? L"Parse error: JSON nesting too deep"
+            : L"Parse error: invalid JSON";
+        return env;
+    }
+    auto reject = [&env](std::wstring message) {
+        env.kind = EnvelopeKind::InvalidRequest;
+        env.code = -32600;
+        env.message = std::move(message);
+        return env;
+    };
+    size_t root = 0;
+    while (root < line.size() && json_space(line[root])) ++root;
+    if (json_type_at(line, root) != JsonType::Object)
+        return reject(L"Invalid Request: expected a JSON object");
+    if (json_member_type(line, L"jsonrpc") != JsonType::String ||
+        json_get_string(line, L"jsonrpc") != L"2.0")
+        return reject(L"Invalid Request: jsonrpc must be \"2.0\"");
+    if (json_member_type(line, L"method") != JsonType::String)
+        return reject(L"Invalid Request: method must be a string");
+    auto id_type = json_member_type(line, L"id");
+    if (id_type != JsonType::Absent && id_type != JsonType::String &&
+        id_type != JsonType::Number && id_type != JsonType::Null)
+        return reject(L"Invalid Request: id must be a string, number, or null");
+    auto params_type = json_member_type(line, L"params");
+    if (params_type != JsonType::Absent && params_type != JsonType::Object)
+        return reject(L"Invalid Request: params must be a JSON object");
+
+    env.method = json_get_string(line, L"method");
+    if (id_type == JsonType::Absent || env.method.starts_with(L"notifications/")) {
+        env.kind = EnvelopeKind::Notification;
+        return env;
+    }
+    env.kind = EnvelopeKind::Request;
+    env.id = json_rpc_id(line);
+    return env;
+}
+
 // --- stdin/stdout I/O ---
 
-static bool read_line(std::wstring& out) {
+// One framed message per line, bounded so oversized input cannot grow
+// without limit; the remainder of an oversized line is discarded up to and
+// including its newline.
+static constexpr size_t kMaxLineBytes = 1u << 20;
+
+enum class ReadResult { Line, Eof, Oversized };
+
+static ReadResult read_line(std::wstring& out) {
     out.clear();
-    // Read UTF-8 from stdin
-    char buf[65536];
-    if (!fgets(buf, sizeof(buf), stdin)) return false;
-    // Convert to wstring
-    int len = MultiByteToWideChar(CP_UTF8, 0, buf, -1, nullptr, 0);
-    if (len <= 0) return false;
-    out.resize(len);
-    MultiByteToWideChar(CP_UTF8, 0, buf, -1, out.data(), len);
-    out.pop_back();
-    // Trim trailing \n/\r
-    while (!out.empty() && (out.back() == L'\n' || out.back() == L'\r'))
-        out.pop_back();
-    return !out.empty();
+    std::string bytes;
+    bool overflow = false;
+    for (;;) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            if (bytes.empty() && !overflow) return ReadResult::Eof;
+            break;
+        }
+        if (c == '\n') break;
+        if (bytes.size() >= kMaxLineBytes) { overflow = true; continue; }
+        bytes.push_back(static_cast<char>(c));
+    }
+    if (overflow) return ReadResult::Oversized;
+    while (!bytes.empty() && bytes.back() == '\r') bytes.pop_back();
+    if (bytes.empty()) return ReadResult::Line;
+    int len = MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
+                                  static_cast<int>(bytes.size()), nullptr, 0);
+    if (len <= 0) return ReadResult::Line;
+    out.resize(static_cast<size_t>(len));
+    MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
+                        static_cast<int>(bytes.size()), out.data(), len);
+    return ReadResult::Line;
 }
 
 static void write_response(const std::wstring& json) {
@@ -431,7 +506,14 @@ static std::wstring do_capture_window(const std::wstring& params) {
 }
 
 static std::wstring handle_tools_call(const std::wstring& id, const std::wstring& params) {
+    if (json_member_type(params, L"name") != JsonType::String)
+        return make_error(id, -32602, L"Invalid params: name must be a string");
     auto name = json_get_string(params, L"name");
+    if (name.empty())
+        return make_error(id, -32602, L"Invalid params: tool name is required");
+    auto arguments_type = json_member_type(params, L"arguments");
+    if (arguments_type != JsonType::Absent && arguments_type != JsonType::Object)
+        return make_error(id, -32602, L"Invalid params: arguments must be a JSON object");
     auto arguments = json_get_raw(params, L"arguments");
 
     std::wstring result;
@@ -453,31 +535,39 @@ int run_mcp_server() {
     SetConsoleCP(CP_UTF8);
 
     std::wstring line;
-    while (read_line(line)) {
-        // Extract id and method
-        std::wstring id = json_rpc_id(line);
-        auto method = json_get_string(line, L"method");
+    for (;;) {
+        auto read = read_line(line);
+        if (read == ReadResult::Eof) break;
+        if (read == ReadResult::Oversized) {
+            write_response(make_error(L"null", -32700, L"Parse error: line too long"));
+            continue;
+        }
+
+        auto env = parse_envelope(line);
+        if (env.kind == EnvelopeKind::ParseError ||
+            env.kind == EnvelopeKind::InvalidRequest) {
+            write_response(make_error(L"null", env.code, env.message));
+            continue;
+        }
+        if (env.kind == EnvelopeKind::Notification) continue;
 
         std::wstring response;
-        if (method == L"initialize") {
-            response = handle_initialize(id);
-        } else if (method == L"notifications/initialized") {
-            // Notification, no response needed
-            continue;
-        } else if (method == L"tools/list") {
-            response = handle_tools_list(id);
-        } else if (method == L"tools/call") {
+        if (env.method == L"initialize") {
+            response = handle_initialize(env.id);
+        } else if (env.method == L"tools/list") {
+            response = handle_tools_list(env.id);
+        } else if (env.method == L"tools/call") {
             auto params_start = json_value_position(line, L"params");
             if (params_start != std::wstring::npos) {
-                response = handle_tools_call(id, json_get_raw(line, L"params"));
+                response = handle_tools_call(env.id, json_get_raw(line, L"params"));
             }
             if (response.empty()) {
-                response = make_error(id, -32602, L"Invalid params");
+                response = make_error(env.id, -32602, L"Invalid params");
             }
-        } else if (method == L"ping") {
-            response = make_response(id, L"{}");
+        } else if (env.method == L"ping") {
+            response = make_response(env.id, L"{}");
         } else {
-            response = make_error(id, -32601, L"Method not found: " + method);
+            response = make_error(env.id, -32601, L"Method not found: " + env.method);
         }
 
         write_response(response);

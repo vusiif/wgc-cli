@@ -74,7 +74,7 @@ inline std::wstring json_token(const std::wstring& json, const std::wstring& key
     return json.substr(start, end - start);
 }
 
-inline bool json_decode_string(const std::wstring& json, size_t start,
+inline bool json_decode_string(std::wstring_view json, size_t start,
                                std::wstring& out, size_t& end) {
     if (start >= json.size() || json[start] != L'"') return false;
     auto hex = [](wchar_t c) -> int {
@@ -134,4 +134,147 @@ inline bool json_decode_string(const std::wstring& json, size_t start,
         }
     }
     return false;
+}
+
+// Classification of a JSON value at a known position (post-validation).
+enum class JsonType { Absent, Null, Bool, Number, String, Array, Object, Invalid };
+
+inline JsonType json_type_at(std::wstring_view json, size_t pos) {
+    if (pos == std::wstring_view::npos || pos >= json.size()) return JsonType::Absent;
+    switch (json[pos]) {
+        case L'{': return JsonType::Object;
+        case L'[': return JsonType::Array;
+        case L'"': return JsonType::String;
+        case L't': case L'f': return JsonType::Bool;
+        case L'n': return JsonType::Null;
+        case L'-':
+        case L'0': case L'1': case L'2': case L'3': case L'4':
+        case L'5': case L'6': case L'7': case L'8': case L'9':
+            return JsonType::Number;
+        default: return JsonType::Invalid;
+    }
+}
+
+// Type of a member of the outer object; Absent when the key is not there.
+inline JsonType json_member_type(const std::wstring& json, const std::wstring& key) {
+    return json_type_at(json, json_value_position(json, key));
+}
+
+// Full-document JSON validation with a nesting bound so hostile payloads
+// cannot exhaust the stack. String rules match json_decode_string exactly,
+// so anything accepted here can be decoded by the extraction helpers.
+enum class JsonStatus { Ok, Syntax, Depth };
+
+namespace json_detail {
+
+struct Validator {
+    std::wstring_view text;
+    size_t pos = 0;
+    int depth = 0;
+    bool too_deep = false;
+    static constexpr int kMaxDepth = 64;
+
+    void skip_space() {
+        while (pos < text.size() && json_space(text[pos])) ++pos;
+    }
+    bool try_consume(wchar_t c) {
+        if (pos < text.size() && text[pos] == c) { ++pos; return true; }
+        return false;
+    }
+    bool consume_literal(std::wstring_view literal) {
+        if (text.compare(pos, literal.size(), literal) != 0) return false;
+        pos += literal.size();
+        return true;
+    }
+    bool parse_number() {
+        try_consume(L'-');
+        if (pos >= text.size() || text[pos] < L'0' || text[pos] > L'9') return false;
+        if (text[pos] == L'0') ++pos;
+        else while (pos < text.size() && text[pos] >= L'0' && text[pos] <= L'9') ++pos;
+        if (try_consume(L'.')) {
+            if (pos >= text.size() || text[pos] < L'0' || text[pos] > L'9') return false;
+            while (pos < text.size() && text[pos] >= L'0' && text[pos] <= L'9') ++pos;
+        }
+        if (pos < text.size() && (text[pos] == L'e' || text[pos] == L'E')) {
+            ++pos;
+            if (pos < text.size() && (text[pos] == L'+' || text[pos] == L'-')) ++pos;
+            if (pos >= text.size() || text[pos] < L'0' || text[pos] > L'9') return false;
+            while (pos < text.size() && text[pos] >= L'0' && text[pos] <= L'9') ++pos;
+        }
+        return true;
+    }
+    bool enter() {
+        if (++depth > kMaxDepth) { too_deep = true; return false; }
+        return true;
+    }
+    bool parse_object() {
+        if (!enter()) return false;
+        ++pos;
+        skip_space();
+        if (try_consume(L'}')) { --depth; return true; }
+        for (;;) {
+            skip_space();
+            if (pos >= text.size() || text[pos] != L'"') return false;
+            std::wstring key;
+            size_t end = 0;
+            if (!json_decode_string(text, pos, key, end)) return false;
+            pos = end;
+            skip_space();
+            if (!try_consume(L':')) return false;
+            skip_space();
+            if (!parse_value()) return false;
+            skip_space();
+            if (try_consume(L',')) continue;
+            if (try_consume(L'}')) { --depth; return true; }
+            return false;
+        }
+    }
+    bool parse_array() {
+        if (!enter()) return false;
+        ++pos;
+        skip_space();
+        if (try_consume(L']')) { --depth; return true; }
+        for (;;) {
+            skip_space();
+            if (!parse_value()) return false;
+            skip_space();
+            if (try_consume(L',')) continue;
+            if (try_consume(L']')) { --depth; return true; }
+            return false;
+        }
+    }
+    bool parse_value() {
+        if (pos >= text.size()) return false;
+        switch (text[pos]) {
+            case L'{': return parse_object();
+            case L'[': return parse_array();
+            case L'"': {
+                std::wstring decoded;
+                size_t end = 0;
+                if (!json_decode_string(text, pos, decoded, end)) return false;
+                pos = end;
+                return true;
+            }
+            case L't': return consume_literal(L"true");
+            case L'f': return consume_literal(L"false");
+            case L'n': return consume_literal(L"null");
+            case L'-':
+            case L'0': case L'1': case L'2': case L'3': case L'4':
+            case L'5': case L'6': case L'7': case L'8': case L'9':
+                return parse_number();
+            default: return false;
+        }
+    }
+};
+
+} // namespace json_detail
+
+inline JsonStatus json_validate(std::wstring_view text) {
+    json_detail::Validator validator{text};
+    validator.skip_space();
+    if (!validator.parse_value())
+        return validator.too_deep ? JsonStatus::Depth : JsonStatus::Syntax;
+    validator.skip_space();
+    if (validator.pos != text.size()) return JsonStatus::Syntax;
+    return JsonStatus::Ok;
 }
