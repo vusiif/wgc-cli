@@ -8,6 +8,10 @@ function New-CliProcess([string[]]$CliArgs) {
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    # The server speaks UTF-8; .NET would otherwise decode with the console
+    # code page and mangle non-ASCII responses.
+    $info.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $info.StandardErrorEncoding = [System.Text.Encoding]::UTF8
     foreach ($arg in $CliArgs) { $info.ArgumentList.Add($arg) }
     return [System.Diagnostics.Process]::Start($info)
 }
@@ -30,6 +34,23 @@ function Invoke-Cli([string[]]$CliArgs, [string[]]$InputLines = @()) {
 
 function Get-McpMessages([string]$Raw) {
     return @($Raw -split '\r?\n' | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+}
+
+function Invoke-McpRaw([byte[]]$InputBytes) {
+    $process = New-CliProcess @('--mcp-stdio')
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
+        $process.StandardInput.Close()
+        if (!$process.WaitForExit(10000)) { throw 'CLI timed out' }
+        if ($process.ExitCode -ne 0) { throw $stderr.GetAwaiter().GetResult() }
+        return $stdout.GetAwaiter().GetResult()
+    } finally {
+        if (!$process.HasExited) { $process.Kill() }
+        $process.Dispose()
+    }
 }
 
 function Assert-McpError($msg, [int]$code, [string]$label) {
@@ -185,6 +206,20 @@ if ($unknownNames -notcontains 'error' -or [int]$unknownMessages[0].error.code -
     throw 'unknown method must return -32601 with the original id'
 }
 
+# Notification status depends only on a missing id: a request whose method
+# merely looks like a notification still gets -32601 preserving its id.
+$withIdNotify = Get-McpMessages (Invoke-Cli @('--mcp-stdio') @(
+    '{"jsonrpc":"2.0","id":5,"method":"notifications/unknown"}'
+))
+if ($withIdNotify.Count -ne 1) {
+    throw "with-id notifications/unknown: expected 1 response, got $($withIdNotify.Count)"
+}
+$withIdNames = @($withIdNotify[0].PSObject.Properties.Name)
+if ($withIdNames -notcontains 'error' -or $withIdNames -contains 'result' -or
+    [int]$withIdNotify[0].error.code -ne -32601 -or $withIdNotify[0].id -ne 5) {
+    throw 'with-id notifications/unknown must return -32601 with id 5'
+}
+
 $badParamLines = @(
     '{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{}}',
     '{"jsonrpc":"2.0","id":56,"method":"tools/call"}',
@@ -221,6 +256,50 @@ if ($deepMessages.Count -ne 3) { throw "nesting boundary: expected 3 responses, 
 Assert-McpResult $deepMessages[0] 'deep-but-bounded nesting'
 Assert-McpError $deepMessages[1] -32700 'deep nesting overflow'
 Assert-McpError $deepMessages[2] -32700 'oversized line'
+
+# Strict UTF-8 at the read boundary: invalid byte sequences anywhere in the
+# payload (even irrelevant fields) yield -32700 before dispatch, the stream
+# recovers afterwards, and valid non-ASCII input is preserved faithfully.
+$ascii = [System.Text.Encoding]::ASCII
+$utf8Encoding = [System.Text.Encoding]::UTF8
+$rawBytes = [System.Collections.Generic.List[byte]]::new()
+function Add-RawLine([byte[]]$payload) {
+    $script:rawBytes.AddRange($payload)
+    $script:rawBytes.Add(0x0A)
+}
+function Add-JsonWithRawBytes([string]$prefix, [byte[]]$bad, [string]$suffix) {
+    $buf = [System.Collections.Generic.List[byte]]::new()
+    $buf.AddRange($ascii.GetBytes($prefix))
+    foreach ($b in $bad) { $buf.Add($b) }
+    $buf.AddRange($ascii.GetBytes($suffix))
+    Add-RawLine $buf.ToArray()
+}
+$wrapPrefix = '{"jsonrpc":"2.0","id":'
+$padPrefix = ',"method":"ping","pad":"'
+foreach ($badCase in @(
+    @(30, [byte[]](0xFF)),          # invalid single byte
+    @(31, [byte[]](0xC0, 0x80)),    # overlong encoding of NUL
+    @(32, [byte[]](0x80)),          # stray continuation byte
+    @(33, [byte[]](0xE2, 0x82)))) { # truncated multi-byte sequence
+    Add-JsonWithRawBytes ($wrapPrefix + $badCase[0] + $padPrefix) $badCase[1] '"}'
+}
+$nonAsciiId = 'h' + [char]0x00E9 + 'llo-' + (-join [char[]](0xD83D, 0xDE00))
+$nonAsciiMethod = 'no/' + [char]0x00FC + 'nicode'
+Add-RawLine $utf8Encoding.GetBytes('{"jsonrpc":"2.0","id":"' + $nonAsciiId + '","method":"ping"}')
+Add-RawLine $utf8Encoding.GetBytes('{"jsonrpc":"2.0","id":34,"method":"' + $nonAsciiMethod + '"}')
+$rawMessages = Get-McpMessages (Invoke-McpRaw $rawBytes.ToArray())
+if ($rawMessages.Count -ne 6) {
+    throw "utf8 boundary: expected 6 responses, got $($rawMessages.Count)"
+}
+for ($i = 0; $i -lt 4; $i++) { Assert-McpError $rawMessages[$i] -32700 "utf8[$i]" }
+Assert-McpResult $rawMessages[4] 'utf8 non-ascii id'
+if ($rawMessages[4].id -cne $nonAsciiId) { throw 'utf8 non-ascii id: id not preserved' }
+$nonAsciiNames = @($rawMessages[5].PSObject.Properties.Name)
+if ($nonAsciiNames -notcontains 'error' -or $nonAsciiNames -contains 'result' -or
+    [int]$rawMessages[5].error.code -ne -32601 -or $rawMessages[5].id -ne 34 -or
+    $rawMessages[5].error.message -cne ('Method not found: ' + $nonAsciiMethod)) {
+    throw 'utf8 non-ascii method: -32601 must preserve id and message'
+}
 
 $pipeName = 'wgccli-regression-' + [guid]::NewGuid().ToString('N')
 $server = New-CliProcess @('--server', '--pipe', $pipeName)

@@ -187,7 +187,9 @@ static Envelope parse_envelope(const std::wstring& line) {
         return reject(L"Invalid Request: params must be a JSON object");
 
     env.method = json_get_string(line, L"method");
-    if (id_type == JsonType::Absent || env.method.starts_with(L"notifications/")) {
+    // Notification status comes only from the missing id; the method name is
+    // irrelevant, so a request on notifications/* still gets a reply.
+    if (id_type == JsonType::Absent) {
         env.kind = EnvelopeKind::Notification;
         return env;
     }
@@ -203,7 +205,7 @@ static Envelope parse_envelope(const std::wstring& line) {
 // including its newline.
 static constexpr size_t kMaxLineBytes = 1u << 20;
 
-enum class ReadResult { Line, Eof, Oversized };
+enum class ReadResult { Line, Eof, Oversized, InvalidUtf8 };
 
 static ReadResult read_line(std::wstring& out) {
     out.clear();
@@ -222,11 +224,13 @@ static ReadResult read_line(std::wstring& out) {
     if (overflow) return ReadResult::Oversized;
     while (!bytes.empty() && bytes.back() == '\r') bytes.pop_back();
     if (bytes.empty()) return ReadResult::Line;
-    int len = MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
+    // Strict UTF-8: truncated, overlong, stray-continuation or otherwise
+    // invalid sequences anywhere in the line are rejected before decoding.
+    int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
                                   static_cast<int>(bytes.size()), nullptr, 0);
-    if (len <= 0) return ReadResult::Line;
+    if (len <= 0) return ReadResult::InvalidUtf8;
     out.resize(static_cast<size_t>(len));
-    MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
                         static_cast<int>(bytes.size()), out.data(), len);
     return ReadResult::Line;
 }
@@ -540,6 +544,10 @@ int run_mcp_server() {
         if (read == ReadResult::Eof) break;
         if (read == ReadResult::Oversized) {
             write_response(make_error(L"null", -32700, L"Parse error: line too long"));
+            continue;
+        }
+        if (read == ReadResult::InvalidUtf8) {
+            write_response(make_error(L"null", -32700, L"Parse error: invalid UTF-8"));
             continue;
         }
 

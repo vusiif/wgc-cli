@@ -161,8 +161,14 @@ int main(int argc, char* argv[]) {
                       EnvelopeKind::Notification, L"", L"totally/unknown")
             && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
                       EnvelopeKind::Notification, L"", L"notifications/initialized")
-            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"notifications/initialized\"}",
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
                       EnvelopeKind::Notification, L"", L"notifications/initialized")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/unknown\"}",
+                      EnvelopeKind::Notification, L"", L"notifications/unknown")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"notifications/initialized\"}",
+                      EnvelopeKind::Request, L"5", L"notifications/initialized")
+            && expect(L"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"notifications/unknown\"}",
+                      EnvelopeKind::Request, L"5", L"notifications/unknown")
             && expect(L"{\r\n \"jsonrpc\" : \"2.0\" , \"method\" : \"notifications/cancelled\" \n}",
                       EnvelopeKind::Notification, L"", L"notifications/cancelled")
             && expect(L"{", EnvelopeKind::ParseError, L"", L"")
