@@ -195,27 +195,10 @@ static std::wstring handle_capture(const std::wstring& title, uint64_t hwnd_val,
 static std::wstring json_get_string(const std::wstring& json, const std::wstring& key) {
     auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return L"";
-    if (pos >= json.size() || json[pos] != L'"') return L"";
-    pos++; // skip opening quote
-    // Find closing quote, handling escaped chars
-    std::wstring result;
-    while (pos < json.size()) {
-        if (json[pos] == L'\\' && pos + 1 < json.size()) {
-            wchar_t next = json[pos + 1];
-            if (next == L'"') { result += L'"'; pos += 2; }
-            else if (next == L'\\') { result += L'\\'; pos += 2; }
-            else if (next == L'n') { result += L'\n'; pos += 2; }
-            else if (next == L'r') { result += L'\r'; pos += 2; }
-            else if (next == L't') { result += L'\t'; pos += 2; }
-            else { result += next; pos += 2; }
-        } else if (json[pos] == L'"') {
-            break;
-        } else {
-            result += json[pos];
-            pos++;
-        }
-    }
-    return result;
+    std::wstring out;
+    size_t end = 0;
+    if (!json_decode_string(json, pos, out, end)) return L"";
+    return out;
 }
 
 static uint64_t json_get_uint64(const std::wstring& json, const std::wstring& key) {

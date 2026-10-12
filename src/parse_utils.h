@@ -73,3 +73,64 @@ inline std::wstring json_token(const std::wstring& json, const std::wstring& key
            json[end] != L',' && json[end] != L'}' && json[end] != L']') ++end;
     return json.substr(start, end - start);
 }
+
+inline bool json_decode_string(const std::wstring& json, size_t start,
+                               std::wstring& out, size_t& end) {
+    if (start >= json.size() || json[start] != L'"') return false;
+    auto hex = [](wchar_t c) -> int {
+        if (c >= L'0' && c <= L'9') return c - L'0';
+        if (c >= L'a' && c <= L'f') return c - L'a' + 10;
+        if (c >= L'A' && c <= L'F') return c - L'A' + 10;
+        return -1;
+    };
+    size_t i = start + 1;
+    while (i < json.size()) {
+        wchar_t c = json[i];
+        if (c == L'"') { end = i + 1; return true; }
+        if (c != L'\\') { out += c; ++i; continue; }
+        if (i + 1 >= json.size()) return false;
+        wchar_t esc = json[i + 1];
+        i += 2;
+        switch (esc) {
+            case L'"': out += L'"'; break;
+            case L'\\': out += L'\\'; break;
+            case L'/': out += L'/'; break;
+            case L'b': out += L'\b'; break;
+            case L'f': out += L'\f'; break;
+            case L'n': out += L'\n'; break;
+            case L'r': out += L'\r'; break;
+            case L't': out += L'\t'; break;
+            case L'u': {
+                if (i + 4 > json.size()) return false;
+                uint32_t cp = 0;
+                for (size_t k = 0; k < 4; ++k) {
+                    int d = hex(json[i + k]);
+                    if (d < 0) return false;
+                    cp = (cp << 4) | static_cast<uint32_t>(d);
+                }
+                i += 4;
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    if (i + 6 > json.size() || json[i] != L'\\' || json[i + 1] != L'u')
+                        return false;
+                    uint32_t low = 0;
+                    for (size_t k = 0; k < 4; ++k) {
+                        int d = hex(json[i + 2 + k]);
+                        if (d < 0) return false;
+                        low = (low << 4) | static_cast<uint32_t>(d);
+                    }
+                    if (low < 0xDC00 || low > 0xDFFF) return false;
+                    i += 6;
+                    out += static_cast<wchar_t>(cp);
+                    out += static_cast<wchar_t>(low);
+                } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    return false;
+                } else {
+                    out += static_cast<wchar_t>(cp);
+                }
+                break;
+            }
+            default: return false;
+        }
+    }
+    return false;
+}

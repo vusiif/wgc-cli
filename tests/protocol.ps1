@@ -39,6 +39,21 @@ if ($messages.Count -ne 3 -or !$messages[0].result.serverInfo -or
     throw 'MCP protocol regression'
 }
 
+$idResponses = Invoke-Cli @('--mcp-stdio') @(
+    '{"jsonrpc":"2.0","id":"str-1","method":"ping"}',
+    '{"jsonrpc":"2.0","id":1e2,"method":"ping"}',
+    '{"jsonrpc":"2.0","id":"a\"b","method":"ping"}',
+    '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"AB\u0043","arguments":{}}}'
+)
+$idLines = @($idResponses -split '\r?\n' | Where-Object { $_ })
+$idLines | ForEach-Object { Write-Output ('idprobe ' + $_) }
+$idMessages = @($idLines | ForEach-Object { $_ | ConvertFrom-Json })
+if ($idMessages.Count -ne 4 -or $idMessages[0].id -cne 'str-1' -or
+    [double]($idMessages[1].id) -ne 100 -or $idMessages[2].id -cne 'a"b' -or
+    $idMessages[3].error.message -ne 'Unknown tool: ABC') {
+    throw 'JSON-RPC id or unicode escape regression'
+}
+
 $pipeName = 'wgccli-regression-' + [guid]::NewGuid().ToString('N')
 $server = New-CliProcess @('--server', '--pipe', $pipeName)
 try {

@@ -48,26 +48,10 @@ static std::wstring hwnd_hex(HWND hwnd) {
 static std::wstring json_get_string(const std::wstring& json, const std::wstring& key) {
     auto pos = json_value_position(json, key);
     if (pos == std::wstring::npos) return L"";
-    if (pos >= json.size() || json[pos] != L'"') return L"";
-    pos++;
-    std::wstring result;
-    while (pos < json.size()) {
-        if (json[pos] == L'\\' && pos + 1 < json.size()) {
-            wchar_t next = json[pos + 1];
-            if (next == L'"') { result += L'"'; pos += 2; }
-            else if (next == L'\\') { result += L'\\'; pos += 2; }
-            else if (next == L'n') { result += L'\n'; pos += 2; }
-            else if (next == L'r') { result += L'\r'; pos += 2; }
-            else if (next == L't') { result += L'\t'; pos += 2; }
-            else { result += next; pos += 2; }
-        } else if (json[pos] == L'"') {
-            break;
-        } else {
-            result += json[pos];
-            pos++;
-        }
-    }
-    return result;
+    std::wstring out;
+    size_t end = 0;
+    if (!json_decode_string(json, pos, out, end)) return L"";
+    return out;
 }
 
 static bool json_get_bool(const std::wstring& json, const std::wstring& key) {
@@ -114,6 +98,45 @@ static std::wstring json_get_raw(const std::wstring& json, const std::wstring& k
     return json.substr(start);
 }
 
+static std::wstring json_rpc_id(const std::wstring& json) {
+    auto pos = json_value_position(json, L"id");
+    if (pos == std::wstring::npos || pos >= json.size()) return L"-1";
+    wchar_t c = json[pos];
+    if (c == L'"') {
+        std::wstring decoded;
+        size_t end = 0;
+        if (!json_decode_string(json, pos, decoded, end)) return L"-1";
+        return json.substr(pos, end - pos);
+    }
+    if (json.compare(pos, 4, L"null") == 0) {
+        size_t after = pos + 4;
+        if (after >= json.size() || json_space(json[after]) ||
+            json[after] == L',' || json[after] == L'}' || json[after] == L']')
+            return L"null";
+        return L"-1";
+    }
+    if (c != L'-' && (c < L'0' || c > L'9')) return L"-1";
+    size_t i = pos;
+    if (json[i] == L'-') ++i;
+    if (i >= json.size() || json[i] < L'0' || json[i] > L'9') return L"-1";
+    if (json[i] == L'0') ++i;
+    else while (i < json.size() && json[i] >= L'0' && json[i] <= L'9') ++i;
+    if (i < json.size() && json[i] == L'.') {
+        ++i;
+        size_t digits = i;
+        while (i < json.size() && json[i] >= L'0' && json[i] <= L'9') ++i;
+        if (i == digits) return L"-1";
+    }
+    if (i < json.size() && (json[i] == L'e' || json[i] == L'E')) {
+        ++i;
+        if (i < json.size() && (json[i] == L'+' || json[i] == L'-')) ++i;
+        size_t digits = i;
+        while (i < json.size() && json[i] >= L'0' && json[i] <= L'9') ++i;
+        if (i == digits) return L"-1";
+    }
+    return json.substr(pos, i - pos);
+}
+
 // --- stdin/stdout I/O ---
 
 static bool read_line(std::wstring& out) {
@@ -155,14 +178,14 @@ static void write_response(const std::wstring& json) {
 
 // --- MCP protocol handlers ---
 
-static std::wstring make_response(int64_t id, const std::wstring& result) {
+static std::wstring make_response(const std::wstring& id, const std::wstring& result) {
     std::wostringstream oss;
     oss << L"{\"jsonrpc\":\"2.0\",\"id\":" << id
         << L",\"result\":" << result << L"}";
     return oss.str();
 }
 
-static std::wstring make_error(int64_t id, int code, const std::wstring& message) {
+static std::wstring make_error(const std::wstring& id, int code, const std::wstring& message) {
     std::wostringstream oss;
     oss << L"{\"jsonrpc\":\"2.0\",\"id\":" << id
         << L",\"error\":{\"code\":" << code
@@ -170,14 +193,14 @@ static std::wstring make_error(int64_t id, int code, const std::wstring& message
     return oss.str();
 }
 
-static std::wstring handle_initialize(int64_t id) {
+static std::wstring handle_initialize(const std::wstring& id) {
     return make_response(id,
         L"{\"protocolVersion\":\"2024-11-05\""
         L",\"capabilities\":{\"tools\":{}}"
         L",\"serverInfo\":{\"name\":\"wgccli\",\"version\":\"1.7.4\"}}");
 }
 
-static std::wstring handle_tools_list(int64_t id) {
+static std::wstring handle_tools_list(const std::wstring& id) {
     return make_response(id,
         L"{\"tools\":["
         L"{\"name\":\"list_windows\""
@@ -407,7 +430,7 @@ static std::wstring do_capture_window(const std::wstring& params) {
     return oss.str();
 }
 
-static std::wstring handle_tools_call(int64_t id, const std::wstring& params) {
+static std::wstring handle_tools_call(const std::wstring& id, const std::wstring& params) {
     auto name = json_get_string(params, L"name");
     auto arguments = json_get_raw(params, L"arguments");
 
@@ -432,7 +455,7 @@ int run_mcp_server() {
     std::wstring line;
     while (read_line(line)) {
         // Extract id and method
-        int64_t id = json_get_int(line, L"id");
+        std::wstring id = json_rpc_id(line);
         auto method = json_get_string(line, L"method");
 
         std::wstring response;
